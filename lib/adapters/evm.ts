@@ -363,13 +363,15 @@ export class EvmAdapter implements ChainAdapter {
         ? sum + pct
         : sum;
     }, 0);
+    const securedPct = Math.max(lockedPct, burnedPct);
     const mainDexHit = pairs.some((pair) =>
       evm.dexes.some((dex) => pair.dexId.toLowerCase().includes(dex.id.toLowerCase()) || dex.id.includes(pair.dexId)),
     );
     const totalLiq = pairs.reduce((sum, pair) => sum + (pair.liquidityUsd ?? 0), 0);
     const established = (ageDays !== null && ageDays >= 90) || goplus?.trust_list === "1";
+    const hasLpSignal = pairs.length > 0 || lpHolders.length > 0;
     checks.push(
-      !pairs.length && !lpHolders.length
+      !hasLpSignal
         ? check({
             id: "lp_lock",
             title: "LP lock / burn",
@@ -377,28 +379,61 @@ export class EvmAdapter implements ChainAdapter {
             grade: "U",
             summary: `No pool found on ${evm.name} main DEXes.`,
             detail: `Configured DEXes: ${evm.dexes.map((dex) => dex.name).join(", ")}.`,
+            evidence: { tone: "gray" },
           })
-        : lockedPct >= 80 || burnedPct >= 80
+        : lpHolders.length === 0
           ? check({
               id: "lp_lock",
               title: "LP lock / burn",
-              status: "pass",
-              grade: "A",
-              summary: `${formatPct(Math.max(lockedPct, burnedPct))} of tracked LP is locked or burned.`,
-              detail: `Liquidity on listed pools is ${formatUsd(totalLiq)}. Lock data comes from GoPlus-recognized lockers and burn addresses.`,
-              evidence: { lockedPct, burnedPct, totalLiq, mainDexHit },
+              status: "unknown",
+              grade: "U",
+              summary: `Pools found; lock percent undetectable.`,
+              detail: `Liquidity ${formatUsd(totalLiq)}. Undetectable lock data is grade U — not F.`,
+              evidence: { totalLiq, mainDexHit, tone: "gray" },
             })
-          : check({
-              id: "lp_lock",
-              title: "LP lock / burn",
-              status: "flag",
-              grade: lockedPct < 10 && !established ? "F" : "C",
-              summary: `${formatPct(lockedPct)} of tracked LP is locked; ${formatPct(burnedPct)} burned.`,
-              detail: established
-                ? `Unlocked AMM LP on a ${formatAge(createdAt)} contract is a pattern, not the same rug vector as a day-old launch. Pools: ${pools.map((p) => p.dex).join(", ") || "none listed"}.`
-                : `Unlocked LP on ${evm.dexes.map((d) => d.name).join(", ")} is the classic rug vector for new DEX launches. Pools: ${pools.map((p) => p.dex).join(", ") || "none listed"}.`,
-              evidence: { lockedPct, burnedPct, totalLiq, established },
-            }),
+          : securedPct >= 90
+            ? check({
+                id: "lp_lock",
+                title: "LP lock / burn",
+                status: "pass",
+                grade: "A",
+                summary: `🔒 ${formatPct(securedPct)} locked/burned.`,
+                detail: `Liquidity on listed pools is ${formatUsd(totalLiq)}. Lock data comes from GoPlus-recognized lockers and burn addresses.`,
+                evidence: { lockedPct, burnedPct, securedPct, totalLiq, mainDexHit, tone: "green" },
+              })
+            : securedPct >= 50
+              ? check({
+                  id: "lp_lock",
+                  title: "LP lock / burn",
+                  status: "pass",
+                  grade: "B",
+                  summary: `🔐 ${formatPct(securedPct)} locked/burned.`,
+                  detail: `Liquidity on listed pools is ${formatUsd(totalLiq)}.`,
+                  evidence: { lockedPct, burnedPct, securedPct, totalLiq, tone: "gold" },
+                })
+              : securedPct >= 1
+                ? check({
+                    id: "lp_lock",
+                    title: "LP lock / burn",
+                    status: "flag",
+                    grade: "C",
+                    summary: `🔓 ${formatPct(securedPct)} of tracked LP is locked; ${formatPct(burnedPct)} burned.`,
+                    detail: established
+                      ? `Partial LP lock on a ${formatAge(createdAt)} contract. Pools: ${pools.map((p) => p.dex).join(", ") || "none listed"}.`
+                      : `Low lock coverage on ${evm.dexes.map((d) => d.name).join(", ")}. Pools: ${pools.map((p) => p.dex).join(", ") || "none listed"}.`,
+                    evidence: { lockedPct, burnedPct, securedPct, totalLiq, established, tone: "red" },
+                  })
+                : check({
+                    id: "lp_lock",
+                    title: "LP lock / burn",
+                    status: "flag",
+                    grade: "D",
+                    summary: `🔓 0% of tracked LP is locked.`,
+                    detail: established
+                      ? `Unlocked AMM LP on a ${formatAge(createdAt)} contract is a pattern, not the same rug vector as a day-old launch.`
+                      : `Unlocked LP on ${evm.dexes.map((d) => d.name).join(", ")} is the classic rug vector for new DEX launches.`,
+                    evidence: { lockedPct, burnedPct, securedPct: 0, totalLiq, established, tone: "red" },
+                  }),
     );
 
     checks.push(
