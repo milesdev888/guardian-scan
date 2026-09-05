@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Lock, LockOpen } from "lucide-react";
 import {
   Accordion,
   AccordionContent,
@@ -13,7 +13,7 @@ import { Separator } from "@/components/ui/separator";
 import { GradeMark } from "@/components/scanner/grade-mark";
 import { buttonVariants } from "@/components/ui/button";
 import { formatAge, formatPct, formatUsd, shorten } from "@/lib/guardian/grade";
-import type { GuardianReport, PresenceMatch, ScanResponse } from "@/lib/guardian/types";
+import type { Check, GuardianReport, PresenceMatch, ScanResponse } from "@/lib/guardian/types";
 import { cn } from "@/lib/utils";
 
 const SEVERITY: Record<string, string> = {
@@ -21,6 +21,22 @@ const SEVERITY: Record<string, string> = {
   watch: "border-sky-500/40 text-sky-200",
   caution: "border-amber-400/40 text-amber-200",
   critical: "border-red-500/45 text-red-300",
+};
+
+function lockTone(check: Check): "green" | "gold" | "red" | "gray" {
+  const tone = check.evidence?.tone;
+  if (tone === "green" || tone === "gold" || tone === "red" || tone === "gray") return tone;
+  if (check.grade === "A") return "green";
+  if (check.grade === "B") return "gold";
+  if (check.grade === "U") return "gray";
+  return "red";
+}
+
+const LOCK_TONE_CLASS: Record<string, string> = {
+  green: "text-emerald-400",
+  gold: "text-amber-300",
+  red: "text-red-400",
+  gray: "text-muted-foreground",
 };
 
 export function ScanResultView({
@@ -88,6 +104,44 @@ function PresenceBar({
   );
 }
 
+function CheckCard({ item }: { item: Check }) {
+  const isLp = item.id === "lp_lock";
+  const tone = isLp ? lockTone(item) : null;
+  return (
+    <div className="flex gap-3 rounded-xl border border-border/80 bg-card/60 p-3 sm:p-4">
+      <GradeMark grade={item.grade} size="sm" className="mt-0.5 shrink-0" />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <h3 className="font-medium">{item.title}</h3>
+          <span className="text-xs text-muted-foreground">
+            grade {item.grade} · {item.status}
+          </span>
+          {isLp && tone ? (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 text-xs font-medium",
+                LOCK_TONE_CLASS[tone],
+              )}
+              title={`LP lock tone: ${tone}`}
+            >
+              {tone === "gray" || tone === "red" ? (
+                <LockOpen className="size-3.5" aria-hidden />
+              ) : (
+                <Lock className="size-3.5" aria-hidden />
+              )}
+              {typeof item.evidence?.securedPct === "number"
+                ? `${Math.round(item.evidence.securedPct as number)}%`
+                : null}
+            </span>
+          ) : null}
+        </div>
+        <p className="mt-1 text-sm">{item.summary}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{item.detail}</p>
+      </div>
+    </div>
+  );
+}
+
 export function ReportView({ report }: { report: GuardianReport }) {
   return (
     <div className="space-y-6">
@@ -149,22 +203,7 @@ export function ReportView({ report }: { report: GuardianReport }) {
 
       <div className="grid gap-3">
         {report.checks.map((item) => (
-          <div
-            key={item.id}
-            className="flex gap-3 rounded-xl border border-border/80 bg-card/60 p-3 sm:p-4"
-          >
-            <GradeMark grade={item.grade} size="sm" className="mt-0.5 shrink-0" />
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-baseline gap-2">
-                <h3 className="font-medium">{item.title}</h3>
-                <span className="text-xs text-muted-foreground">
-                  grade {item.grade} · {item.status}
-                </span>
-              </div>
-              <p className="mt-1 text-sm">{item.summary}</p>
-              <p className="mt-1 text-xs text-muted-foreground">{item.detail}</p>
-            </div>
-          </div>
+          <CheckCard key={item.id} item={item} />
         ))}
       </div>
 
@@ -177,9 +216,20 @@ export function ReportView({ report }: { report: GuardianReport }) {
             {report.holders.length ? (
               <ul className="space-y-2">
                 {report.holders.map((holder, index) => (
-                  <li key={`${holder.address}-${index}`} className="flex items-center justify-between gap-3 text-sm">
-                    <span className="font-mono text-xs text-muted-foreground">
-                      {holder.tag ?? shorten(holder.address || "unknown", 5)}
+                  <li
+                    key={`${holder.address}-${index}`}
+                    className="flex items-center justify-between gap-3 text-sm"
+                  >
+                    <span className="min-w-0">
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {shorten(holder.address || "unknown", 5)}
+                      </span>
+                      {holder.tag || holder.label ? (
+                        <span className="mt-0.5 block text-xs text-foreground/70">
+                          {holder.label ?? holder.tag}
+                          {holder.unlockEnd ? ` · unlocks ${holder.unlockEnd}` : ""}
+                        </span>
+                      ) : null}
                     </span>
                     <span>{formatPct(holder.percent)}</span>
                   </li>
@@ -202,7 +252,14 @@ export function ReportView({ report }: { report: GuardianReport }) {
                   <li key={pool.pairAddress} className="text-sm">
                     <div className="flex items-center justify-between gap-2">
                       <span>
-                        {pool.dex} / {pool.quote}
+                        {pool.dex} / {pool.quote || "—"}
+                        {pool.permanentLock ? (
+                          <span className="ml-2 text-xs text-emerald-400">🔒 permanent</span>
+                        ) : typeof pool.lockedPct === "number" ? (
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            {Math.round(pool.lockedPct)}% locked
+                          </span>
+                        ) : null}
                       </span>
                       <span>{formatUsd(pool.liquidityUsd)}</span>
                     </div>
