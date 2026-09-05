@@ -80,13 +80,13 @@ Tweet drafts (one per chain):
 
 ## Deploy
 
-Live: [guardian-scan.onrender.com](https://guardian-scan.onrender.com)
+Live on Render: [guardian-scan.onrender.com](https://guardian-scan.onrender.com)
+
+This is a standard Next.js app on Vercel — no extra config. From the repo: `npx vercel` (or Import on vercel.com). Optional RPC URLs and `X402_PAY_TO_EVM` can be set as environment variables after the first deploy.
 
 Source: [github.com/milesdev888/guardian-scan](https://github.com/milesdev888/guardian-scan)
 
 The HTTP server binds `0.0.0.0:$PORT`. `render.yaml` is a Render Blueprint (`npm install && npm run build`, then `npm start`). Health check: `/api/health`.
-
-On Vercel, this is a standard Next.js app — no extra config. Optional RPC URLs and `X402_PAY_TO_EVM` can be set as environment variables after the first deploy.
 
 ## Out of scope (v2)
 
