@@ -1,4 +1,5 @@
 import { asArray, asRecord, fetchJson, num, str } from "@/lib/http";
+import type { KnownAccount } from "@/lib/guardian/accounts";
 
 export type RugCheckReport = {
   mint: string | null;
@@ -12,10 +13,18 @@ export type RugCheckReport = {
   deployer: string | null;
   score: number | null;
   risks: Array<{ name: string; level?: string; description?: string }>;
-  topHolders: Array<{ address?: string; pct?: number; insider?: boolean }>;
+  topHolders: Array<{
+    address?: string;
+    owner?: string;
+    pct?: number;
+    insider?: boolean;
+  }>;
   totalHolders: number | null;
+  /** Root-level aggregate when present; prefer per-market lpLockedPct. */
   lpLockedPct: number | null;
   markets: unknown[];
+  knownAccounts: Record<string, KnownAccount>;
+  lockers: Record<string, { programID?: string; type?: string; unlockDate?: number }>;
   detectedAt: number | null;
 };
 
@@ -41,10 +50,48 @@ export async function fetchRugCheck(
     const row = asRecord(item) ?? {};
     return {
       address: str(row.address) ?? str(row.owner) ?? undefined,
+      owner: str(row.owner) ?? undefined,
       pct: num(row.pct) ?? num(row.percentage) ?? undefined,
       insider: Boolean(row.insider),
     };
   });
+
+  const knownAccounts: Record<string, KnownAccount> = {};
+  const knownRaw = asRecord(root.knownAccounts) ?? {};
+  for (const [address, value] of Object.entries(knownRaw)) {
+    const row = asRecord(value) ?? {};
+    knownAccounts[address] = {
+      name: str(row.name),
+      type: str(row.type),
+    };
+  }
+
+  const lockers: RugCheckReport["lockers"] = {};
+  const lockersRaw = asRecord(root.lockers) ?? {};
+  for (const [key, value] of Object.entries(lockersRaw)) {
+    const row = asRecord(value) ?? {};
+    lockers[key] = {
+      programID: str(row.programID) ?? undefined,
+      type: str(row.type) ?? undefined,
+      unlockDate: num(row.unlockDate) ?? undefined,
+    };
+  }
+
+  // Prefer deepest market's lock % — root `lp` is often null for Meteora DAMM v2.
+  let marketLocked: number | null = null;
+  let deepestUsd = -1;
+  for (const item of markets) {
+    const row = asRecord(item);
+    const lp = asRecord(row?.lp);
+    if (!lp) continue;
+    const usd = (num(lp.quoteUSD) ?? 0) + (num(lp.baseUSD) ?? 0);
+    const locked = num(lp.lpLockedPct);
+    if (usd >= deepestUsd && locked != null) {
+      deepestUsd = usd;
+      marketLocked = locked;
+    }
+  }
+
   const lp = asRecord(root.lp);
   return {
     data: {
@@ -61,8 +108,10 @@ export async function fetchRugCheck(
       risks,
       topHolders,
       totalHolders: num(root.totalHolders),
-      lpLockedPct: num(lp?.lpLockedPct) ?? num(root.lpLockedPct),
+      lpLockedPct: marketLocked ?? num(lp?.lpLockedPct) ?? num(root.lpLockedPct),
       markets,
+      knownAccounts,
+      lockers,
       detectedAt: num(root.detectedAt) ?? num(root.createdAt),
     },
   };

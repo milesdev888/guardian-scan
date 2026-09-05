@@ -108,6 +108,9 @@ export type LiquidityPool = {
   liquidityUsd: number | null;
   createdAt: number | null;
   url: string | null;
+  /** Share of this pool's LP that is locked or burned (0–100), when measured. */
+  lockedPct?: number | null;
+  permanentLock?: boolean;
 };
 
 export type Holder = {
@@ -115,6 +118,10 @@ export type Holder = {
   percent: number | null;
   tag: string | null;
   locked: boolean | null;
+  /** liquidity | locked | burn | free (or null when unclassified) */
+  kind?: "liquidity" | "locked" | "burn" | "other" | null;
+  unlockEnd?: string | null;
+  label?: string | null;
 };
 
 export type SourceStatus = {
