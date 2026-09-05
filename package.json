@@ -1,6 +1,6 @@
 {
   "name": "guardian-scan",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "engines": {
     "node": ">=20"
@@ -9,7 +9,8 @@
     "dev": "next dev --hostname 0.0.0.0 --port 4317",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0 --port ${PORT:-4317}",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "node --test scripts/v2.1-unit.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
