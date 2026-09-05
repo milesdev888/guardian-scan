@@ -64,8 +64,8 @@ export type PresenceMatch = {
 
 export type Pattern = {
   id: string;
-  title: string;
   severity: PatternSeverity;
+  title: string;
   detail: string;
 };
 
