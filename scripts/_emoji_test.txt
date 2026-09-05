@@ -1,0 +1,1 @@
+emoji test: lock=🔒 gold=🔏 open=🔓 wrong_should_not_use=🔐
