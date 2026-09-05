@@ -12,7 +12,13 @@ import type {
 import { DISCLAIMER } from "@/lib/guardian/types";
 import { isSolanaAddress } from "@/lib/chains/detect";
 import { findCopycats } from "@/lib/guardian/copycats";
+import {
+  classifyHolders,
+  gradeHolderConcentration,
+  holderConcentration,
+} from "@/lib/guardian/accounts";
 import { check, compileReportMeta, daysAgo, formatAge, formatPct, formatUsd, pattern } from "@/lib/guardian/grade";
+import { assessLpLock, gradeLpLock, parseMarkets } from "@/lib/guardian/liquidity";
 import { fetchDexToken, filterPairsForChain, identityFromPairs } from "@/lib/sources/dexscreener";
 import { fetchGoPlusSolana } from "@/lib/sources/goplus";
 import { fetchRugCheck } from "@/lib/sources/rugcheck";
@@ -87,24 +93,67 @@ export class SolanaAdapter implements ChainAdapter {
     const goplusMint = goplus.data?.mintable?.status === "1";
     const goplusFreeze = goplus.data?.freezable?.status === "1";
 
-    const holders: Holder[] = (rug.data?.topHolders.length ? rug.data.topHolders : goplus.data?.holders ?? [])
-      .slice(0, 10)
-      .map((row) => ({
-        address: ("address" in row ? row.address : undefined) ?? "",
-        percent: "pct" in row ? (row.pct ?? null) : Number((row as { percent?: string }).percent ?? 0) * 100,
-        tag: "insider" in row && row.insider ? "insider" : ((row as { tag?: string }).tag ?? null),
-        locked: "is_locked" in row ? (row as { is_locked?: number }).is_locked === 1 : null,
-      }));
-    const top10 = holders.reduce((sum, row) => sum + (row.percent ?? 0), 0);
-
-    const pools: LiquidityPool[] = (pairs.length ? pairs : dex.pairs).slice(0, 6).map((pair) => ({
-      dex: pair.dexId,
-      pairAddress: pair.pairAddress,
-      quote: pair.quoteToken.symbol ?? "",
-      liquidityUsd: pair.liquidityUsd,
-      createdAt: pair.pairCreatedAt,
-      url: pair.url,
+    const knownAccounts = rug.data?.knownAccounts ?? {};
+    const rawHolderRows = rug.data?.topHolders.length
+      ? rug.data.topHolders
+      : (goplus.data?.holders ?? []).map((row) => ({
+          address: row.address,
+          owner: undefined as string | undefined,
+          pct: Number(row.percent ?? 0) * 100,
+          insider: false,
+        }));
+    const classified = classifyHolders(rawHolderRows, knownAccounts);
+    const concentration = holderConcentration(classified);
+    const holders: Holder[] = classified.slice(0, 10).map((row) => ({
+      address: row.address,
+      percent: row.percent,
+      tag: row.tag,
+      locked: row.locked,
+      kind: row.kind,
+      unlockEnd: row.unlockEnd,
+      label: row.label,
     }));
+
+    const markets = parseMarkets(rug.data?.markets ?? []);
+    const lpAssessment = assessLpLock({
+      markets,
+      knownAccounts,
+      rootLpLockedPct: rug.data?.lpLockedPct ?? null,
+    });
+
+    const pools: LiquidityPool[] = (pairs.length ? pairs : dex.pairs).slice(0, 6).map((pair) => {
+      const marketHit = markets.find(
+        (m) => m.pubkey && pair.pairAddress && m.pubkey === pair.pairAddress,
+      );
+      const isTop = markets[0]?.pubkey === pair.pairAddress;
+      return {
+        dex: pair.dexId,
+        pairAddress: pair.pairAddress,
+        quote: pair.quoteToken.symbol ?? "",
+        liquidityUsd: pair.liquidityUsd,
+        createdAt: pair.pairCreatedAt,
+        url: pair.url,
+        lockedPct: isTop
+          ? lpAssessment.securedPct
+          : marketHit?.lpLockedPct ?? null,
+        permanentLock: isTop ? lpAssessment.permanent : false,
+      };
+    });
+    // Ensure Meteora market appears even if DexScreener listing lags.
+    if (markets[0] && !pools.some((p) => p.pairAddress === markets[0].pubkey)) {
+      pools.unshift({
+        dex: markets[0].marketType || "pool",
+        pairAddress: markets[0].pubkey || "",
+        quote: "",
+        liquidityUsd: markets[0].poolUsd || null,
+        createdAt: null,
+        url: markets[0].pubkey
+          ? `https://solscan.io/account/${markets[0].pubkey}`
+          : null,
+        lockedPct: lpAssessment.securedPct,
+        permanentLock: lpAssessment.permanent,
+      });
+    }
 
     const copycats = symbol
       ? (
@@ -241,40 +290,65 @@ export class SolanaAdapter implements ChainAdapter {
           }),
     );
 
-    const locked = rug.data?.lpLockedPct;
+    const lpGrade = gradeLpLock(lpAssessment);
+    const lpIcon =
+      lpGrade.grade === "A"
+        ? "🔒"
+        : lpGrade.grade === "B"
+          ? "🔐"
+          : lpGrade.grade === "U"
+            ? "🔓"
+            : "🔓";
     checks.push(
-      locked === null || locked === undefined
+      lpGrade.grade === "U"
         ? check({
             id: "lp_lock",
             title: "LP lock / burn",
-            status: pools.length ? "flag" : "unknown",
-            grade: pools.length ? "C" : "U",
+            status: "unknown",
+            grade: "U",
             summary: pools.length
-              ? `Pools found on ${[...new Set(pools.map((p) => p.dex))].join(", ")}; lock percent missing.`
+              ? `Pools found on ${[...new Set(pools.map((p) => p.dex))].join(", ")}; lock percent undetectable.`
               : "No LP lock figure and no DexScreener pools.",
-            detail: `Main DEXes: ${sol.dexes.map((d) => d.name).join(", ")}.`,
+            detail: `Main DEXes: ${sol.dexes.map((d) => d.name).join(", ")}. Undetectable lock data is grade U — not F.`,
+            evidence: { ...lpAssessment, tone: "gray" },
           })
-        : locked >= 80
-          ? check({
-              id: "lp_lock",
-              title: "LP lock / burn",
-              status: "pass",
-              grade: "A",
-              summary: `${formatPct(locked)} of LP is locked or burned.`,
-              detail: `Liquidity across listed pools: ${formatUsd(pools.reduce((s, p) => s + (p.liquidityUsd ?? 0), 0))}.`,
-            })
-          : check({
-              id: "lp_lock",
-              title: "LP lock / burn",
-              status: "flag",
-              grade: locked < 10 ? "F" : "D",
-              summary: `${formatPct(locked)} of LP is locked.`,
-              detail: "Unlocked Raydium / Meteora / Pump LP is the standard Solana rug vector.",
-            }),
+        : check({
+            id: "lp_lock",
+            title: "LP lock / burn",
+            status: lpGrade.status,
+            grade: lpGrade.grade,
+            summary: `${lpIcon} ${lpAssessment.summaryLabel}.`,
+            detail: [
+              lpAssessment.permanent
+                ? "Meteora DAMM v2 permanent-lock flag (or equivalent burn/lock) detected."
+                : null,
+              lpAssessment.lockerName ? `Via ${lpAssessment.lockerName}.` : null,
+              `Liquidity across listed pools: ${formatUsd(pools.reduce((s, p) => s + (p.liquidityUsd ?? 0), 0))}.`,
+              "Grades: ≥90% A · 50–89% B · 1–49% C · 0% D · undetectable U.",
+            ]
+              .filter(Boolean)
+              .join(" "),
+            evidence: {
+              securedPct: lpAssessment.securedPct,
+              lockedPct: lpAssessment.lockedPct,
+              burnedPct: lpAssessment.burnedPct,
+              permanent: lpAssessment.permanent,
+              marketType: lpAssessment.marketType,
+              tone:
+                (lpAssessment.securedPct ?? 0) >= 90
+                  ? "green"
+                  : (lpAssessment.securedPct ?? 0) >= 50
+                    ? "gold"
+                    : "red",
+            },
+          }),
     );
 
+    const holderGrade = holders.length
+      ? gradeHolderConcentration(concentration.adjustedTop10)
+      : null;
     checks.push(
-      holders.length === 0
+      !holderGrade
         ? check({
             id: "holder_concentration",
             title: "Holder concentration",
@@ -283,23 +357,24 @@ export class SolanaAdapter implements ChainAdapter {
             summary: "Top-10 holders were not returned.",
             detail: "RugCheck and GoPlus both missed holder tables.",
           })
-        : top10 >= 70
-          ? check({
-              id: "holder_concentration",
-              title: "Holder concentration",
-              status: "flag",
-              grade: top10 >= 90 ? "F" : "D",
-              summary: `Top 10 wallets hold ${formatPct(top10)} of supply.`,
-              detail: "Includes bonding-curve and LP accounts when RugCheck lists them.",
-            })
-          : check({
-              id: "holder_concentration",
-              title: "Holder concentration",
-              status: "pass",
-              grade: top10 >= 50 ? "B" : "A",
-              summary: `Top 10 wallets hold ${formatPct(top10)} of supply.`,
-              detail: `${holders.length} accounts listed.`,
-            }),
+        : check({
+            id: "holder_concentration",
+            title: "Holder concentration",
+            status: holderGrade.status,
+            grade: holderGrade.grade,
+            summary: `Top 10 hold ${formatPct(concentration.rawTop10)} raw · ${formatPct(concentration.adjustedTop10)} excluding locked & LP.`,
+            detail: [
+              "LP/pool vaults labeled Liquidity; Streamflow/vesting labeled Locked; burns excluded.",
+              `Adjusted top-1 ${formatPct(concentration.adjustedTop1)}.`,
+              "Grade keys off the adjusted top-10 figure.",
+            ].join(" "),
+            evidence: {
+              rawTop10: concentration.rawTop10,
+              adjustedTop10: concentration.adjustedTop10,
+              excludedLiquidityPct: concentration.excludedLiquidityPct,
+              excludedLockedPct: concentration.excludedLockedPct,
+            },
+          }),
     );
 
     const createdAt = pools[0]?.createdAt ?? rug.data?.detectedAt ?? null;
