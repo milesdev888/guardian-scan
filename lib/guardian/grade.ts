@@ -1,12 +1,35 @@
-import type { Check, Grade, Pattern, PatternSeverity } from "@/lib/guardian/types";
+import type { Check, Grade, Pattern, PatternSeverity } from "./types";
 
 const GRADE_ORDER: Grade[] = ["A", "B", "C", "D", "F"];
 
+/** Letter → points for the composite average. U is excluded from the denominator. */
+export const GRADE_POINTS: Record<Exclude<Grade, "U">, number> = {
+  A: 100,
+  B: 80,
+  C: 55,
+  D: 30,
+  F: 0,
+};
+
+/**
+ * Composite weights (sum 100). Checks not listed do not affect the score.
+ * Grade U checks are excluded from the denominator.
+ */
+export const COMPOSITE_WEIGHTS: Record<string, number> = {
+  honeypot_simulation: 20,
+  lp_lock: 20,
+  holder_concentration: 20,
+  owner_privileges: 15,
+  transfer_tax: 10,
+  contract_age: 10,
+  copycats: 5,
+};
+
 export function gradeFromScore(score: number): Grade {
-  if (score >= 88) return "A";
-  if (score >= 74) return "B";
-  if (score >= 58) return "C";
-  if (score >= 40) return "D";
+  if (score >= 85) return "A";
+  if (score >= 70) return "B";
+  if (score >= 50) return "C";
+  if (score >= 30) return "D";
   return "F";
 }
 
@@ -64,37 +87,77 @@ export function pattern(
   return { id, severity, title, detail };
 }
 
+function verdictFromChecks(checks: Check[]): string {
+  const byId = new Map(checks.map((c) => [c.id, c]));
+  const bits: string[] = [];
+
+  const lp = byId.get("lp_lock");
+  if (lp && lp.grade !== "U") {
+    if (lp.grade === "A") bits.push("Locked liquidity");
+    else if (lp.grade === "B") bits.push("Partially locked liquidity");
+    else bits.push("Weak LP lock");
+  }
+
+  const age = byId.get("contract_age");
+  if (age && (age.grade === "D" || age.grade === "C" || age.grade === "B")) {
+    bits.push("young token");
+  }
+
+  const holders = byId.get("holder_concentration");
+  if (holders && holders.grade !== "U") {
+    if (holders.grade === "A" || holders.grade === "B") bits.push("dispersed holders");
+    else bits.push("watch concentration");
+  }
+
+  const hp = byId.get("honeypot_simulation");
+  if (hp && (hp.grade === "F" || hp.grade === "D")) bits.push("sell-trap risk");
+
+  const priv = byId.get("owner_privileges");
+  if (priv && (priv.grade === "F" || priv.grade === "D")) bits.push("live owner privileges");
+
+  const copies = byId.get("copycats");
+  if (copies && copies.status === "flag") bits.push("same-ticker copies");
+
+  if (!bits.length) {
+    const flagTitles = checks
+      .filter((item) => item.status === "flag")
+      .map((item) => item.title.toLowerCase());
+    return flagTitles.length
+      ? flagTitles.slice(0, 3).join(" · ")
+      : "No high-severity patterns in the v2 checks";
+  }
+
+  // "Locked liquidity, young token, watch concentration"
+  const [first, ...rest] = bits.slice(0, 3);
+  if (!rest.length) return first;
+  return `${first}, ${rest.join(", ")}`;
+}
+
+/**
+ * Composite score = weighted average of check grades.
+ * A=100, B=80, C=55, D=30, F=0. Grade U excluded from the denominator.
+ */
 export function compileReportMeta(checks: Check[], extraPatterns: Pattern[] = []) {
-  let score = 100;
   const patterns = [...extraPatterns];
+  let weighted = 0;
+  let weightSum = 0;
 
   for (const item of checks) {
-    if (item.status === "unknown" || item.status === "unavailable") continue;
-    if (item.grade === "B") score -= 6;
-    if (item.grade === "C") score -= 14;
-    if (item.grade === "D") score -= 24;
-    if (item.grade === "F") score -= 38;
+    const weight = COMPOSITE_WEIGHTS[item.id];
+    if (!weight) continue;
+    if (item.grade === "U" || item.status === "unknown" || item.status === "unavailable") {
+      continue;
+    }
+    const points = GRADE_POINTS[item.grade as Exclude<Grade, "U">];
+    if (points === undefined) continue;
+    weighted += points * weight;
+    weightSum += weight;
   }
 
-  const critical = checks.filter((item) => item.grade === "F");
-  const caution = checks.filter((item) => item.grade === "D" || item.grade === "C");
-
-  if (critical.length) {
-    score = Math.min(score, 39);
-  } else if (caution.length >= 3) {
-    score = Math.min(score, 57);
-  }
-
-  score = Math.max(8, Math.min(100, Math.round(score)));
+  const score =
+    weightSum > 0 ? Math.max(0, Math.min(100, Math.round(weighted / weightSum))) : 50;
   const grade = gradeFromScore(score);
-
-  const flagTitles = checks
-    .filter((item) => item.status === "flag")
-    .map((item) => item.title.toLowerCase());
-
-  const headline = flagTitles.length
-    ? flagTitles.slice(0, 3).join(" · ")
-    : "No high-severity patterns in the v2 checks";
+  const headline = verdictFromChecks(checks);
 
   return { score, grade, headline, patterns };
 }
