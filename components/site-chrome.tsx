@@ -53,7 +53,7 @@ export function SiteFooter() {
     <footer className="mt-auto border-t border-border/70">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-2 px-4 py-6 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
         <p>Grades and patterns. Not a verdict, endorsement, or investment view.</p>
-        <p>Solana · Ethereum · Base · Arbitrum · Robinhood Chain</p>
+        <p>Solana · Ethereum · Base · Arbitrum · Robinhood Chain · XRPL</p>
       </div>
     </footer>
   );
