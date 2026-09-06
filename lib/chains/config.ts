@@ -10,7 +10,7 @@ export const SOLANA: SolanaChainConfig = {
   id: "solana",
   name: "Solana",
   shortName: "SOL",
-  rpcUrl: env("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com"),
+  rpcUrl: env("SOLANA_RPC_URL", "https://solana-rpc.publicnode.com"),
   explorerUrl: "https://solscan.io",
   dexScreenerChain: "solana",
   dexes: [
