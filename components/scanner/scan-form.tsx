@@ -1,27 +1,10 @@
 import { AddressInput } from "@/components/scanner/address-input";
+import { ChainBillboard } from "@/components/scanner/chain-billboard";
 import { ScanResultView } from "@/components/scanner/report-view";
 import { buttonVariants } from "@/components/ui/button";
 import { detectFamily } from "@/lib/chains/detect";
-import type { ScanResponse } from "@/lib/guardian/types";
+import type { ScanResponse, XrplIssuance } from "@/lib/guardian/types";
 import { cn } from "@/lib/utils";
-
-const EXAMPLES = [
-  {
-    label: "USDC",
-    chain: "Ethereum",
-    address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-  },
-  {
-    label: "BONK",
-    chain: "Solana",
-    address: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
-  },
-  {
-    label: "WETH",
-    chain: "Base",
-    address: "0x4200000000000000000000000000000000000006",
-  },
-];
 
 export function ScanForm({
   address,
@@ -33,6 +16,9 @@ export function ScanForm({
   result: ScanResponse | null;
 }) {
   const detected = address ? detectFamily(address) : { family: null };
+  const familyLabel =
+    detected.family === "evm" ? "EVM" : detected.family === "xrpl" ? "XRPL" : detected.family === "solana" ? "Solana" : null;
+
   return (
     <div className="mx-auto w-full max-w-5xl">
       <div className="mb-8 space-y-3">
@@ -41,8 +27,8 @@ export function ScanForm({
           Scan the contract. Read the patterns.
         </h1>
         <p className="max-w-2xl text-sm text-muted-foreground sm:text-base">
-          No chain dropdown. Paste a mint or 0x address. Base58 is Solana. 0x plus 40 hex is EVM —
-          Guardian then shows every configured chain where the contract actually exists.
+          No chain dropdown. Paste a mint, 0x address, or XRPL classic address starting with r. Base58 is
+          Solana. 0x plus 40 hex is EVM. r… with a valid checksum is XRPL.
         </p>
       </div>
 
@@ -59,34 +45,15 @@ export function ScanForm({
             Scan
           </button>
         </div>
-        {detected.family ? (
-          <p className="text-xs text-primary">
-            Detected {detected.family === "evm" ? "EVM" : "Solana"}
-          </p>
+        {familyLabel ? (
+          <p className="text-xs text-primary">Detected {familyLabel}</p>
         ) : address ? (
           <p className="text-xs text-muted-foreground">Waiting for a complete address</p>
         ) : null}
       </form>
 
-      <div className="mt-4">
-        <p className="mb-2 text-xs tracking-[0.18em] text-muted-foreground uppercase">
-          Or scan an example
-        </p>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          {EXAMPLES.map((example) => (
-            <a
-              key={example.address}
-              href={`/app?address=${encodeURIComponent(example.address)}`}
-              className={cn(
-                buttonVariants({ variant: "outline" }),
-                "h-auto min-h-14 flex-col items-center justify-center gap-0.5 rounded-2xl py-2.5",
-              )}
-            >
-              <span className="text-sm font-medium text-foreground">{example.label}</span>
-              <span className="text-[11px] text-muted-foreground">{example.chain}</span>
-            </a>
-          ))}
-        </div>
+      <div className="mt-5">
+        <ChainBillboard />
       </div>
 
       <div className="mt-8">
@@ -94,6 +61,9 @@ export function ScanForm({
           <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {result.error}
           </div>
+        ) : null}
+        {result?.kind === "xrpl-issuances" ? (
+          <IssuancePicker address={result.address} issuances={result.issuances} message={result.message} />
         ) : null}
         {result?.kind === "report" ? (
           <ScanResultView result={result} activeChain={chain} />
@@ -104,21 +74,59 @@ export function ScanForm({
   );
 }
 
+function IssuancePicker({
+  address,
+  issuances,
+  message,
+}: {
+  address: string;
+  issuances: XrplIssuance[];
+  message: string;
+}) {
+  return (
+    <div className="rounded-xl border border-border/70 bg-card/60 p-4">
+      <h2 className="font-heading text-xl">This issuer lists multiple currencies</h2>
+      <p className="mt-2 text-sm text-muted-foreground">{message}</p>
+      <p className="mt-1 font-mono text-xs break-all text-muted-foreground">{address}</p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {issuances.map((row) => {
+          const params = new URLSearchParams();
+          params.set("address", address);
+          params.set("currency", row.display);
+          return (
+            <a
+              key={row.currency}
+              href={`/app?${params.toString()}`}
+              className={cn(
+                buttonVariants({ variant: "outline" }),
+                "h-auto min-h-12 flex-col items-start rounded-xl px-3 py-2",
+              )}
+            >
+              <span className="text-sm font-medium">{row.display}</span>
+              <span className="text-[11px] text-muted-foreground">obligation {row.value}</span>
+            </a>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function EmptyIntro() {
   return (
     <div className="grid gap-3 sm:grid-cols-3">
       {[
         {
-          title: "One adapter, four EVM chains",
-          body: "Ethereum, Base, Arbitrum, and Robinhood Chain share EvmAdapter. Chain six is config: id, RPC, explorer, DEX list.",
+          title: "One paste box, six chains",
+          body: "Solana, Ethereum, Base, Arbitrum, Robinhood Chain, and XRPL. The row under the box is a billboard — it never gates the scan.",
         },
         {
-          title: "Same report on Solana",
-          body: "Mint/freeze, LP lock, holders, age, and same-ticker copies land in the same grades-and-patterns layout.",
+          title: "XRPL is not EVM",
+          body: "No bytecode. Guardian reads issuer flags, TransferRate, trust lines, Domain.toml, and XLS-30 AMM pools from public nodes.",
         },
         {
           title: "Agents pay over x402",
-          body: "Every check is mirrored at /api/scan/evm/{chain}/{address}. Catalog is public; Bazaar listing waits on settlement.",
+          body: "Every check is mirrored at /api/scan/evm/{chain}/{address}, /api/scan/solana/{address}, and /api/scan/xrpl/{issuer}.",
         },
       ].map((item) => (
         <div key={item.title} className="rounded-xl border border-border/70 bg-card/50 p-4">
