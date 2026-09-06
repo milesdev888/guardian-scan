@@ -64,7 +64,13 @@ export async function runScan(input: {
 
   if (detected.family === "solana") {
     const presence = await solanaAdapter.probe(address, SOLANA);
-    if (!presence.exists) {
+    const rpcBlocked =
+      !presence.exists &&
+      Boolean(presence.error) &&
+      /rate limit|too many requests|429|503|502|504|timeout|timed out|fetch failed|HTTP 429|HTTP 503|capacity|exceeded/i.test(
+        presence.error ?? "",
+      );
+    if (!presence.exists && !rpcBlocked) {
       return {
         kind: "error",
         address,
@@ -73,14 +79,40 @@ export async function runScan(input: {
           : "No account at that Solana address.",
       };
     }
-    const report = await scanOnChain(address, "solana");
-    return {
-      kind: "report",
-      family: "solana",
-      address,
-      presence: [presence],
-      reports: [report],
-    };
+    try {
+      const report = await scanOnChain(address, "solana");
+      return {
+        kind: "report",
+        family: "solana",
+        address,
+        presence: [
+          presence.exists
+            ? presence
+            : {
+                ...presence,
+                exists: true,
+                isContract: true,
+                error: presence.error
+                  ? `RPC probe degraded (${presence.error}); report built from other sources`
+                  : undefined,
+              },
+        ],
+        reports: [report],
+      };
+    } catch (error) {
+      if (!presence.exists) {
+        return {
+          kind: "error",
+          address,
+          error: presence.error
+            ? `Solana RPC could not confirm that mint: ${presence.error}`
+            : error instanceof Error
+              ? error.message
+              : "Solana scan failed.",
+        };
+      }
+      throw error;
+    }
   }
 
   if (input.chain) {
