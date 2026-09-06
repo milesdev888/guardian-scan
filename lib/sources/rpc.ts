@@ -34,12 +34,6 @@ export const SELECTORS = {
   transferOwnership: ["f2fde38b"],
 } as const;
 
-/** Public Solana RPCs tried after SOLANA_RPC_URL when the primary is rate-limited. */
-export const SOLANA_RPC_FALLBACKS = [
-  "https://solana-rpc.publicnode.com",
-  "https://api.mainnet-beta.solana.com",
-] as const;
-
 const robinhoodChain = defineChain({
   id: 4663,
   name: "Robinhood Chain",
@@ -189,9 +183,15 @@ export function isBurnAddress(address: string | null | undefined) {
   );
 }
 
+/** Public Solana RPCs tried after SOLANA_RPC_URL when the primary is rate-limited. */
+export const SOLANA_RPC_FALLBACKS = [
+  "https://solana-rpc.publicnode.com",
+  "https://api.mainnet-beta.solana.com",
+] as const;
+
 function isRetryableSolanaRpcError(message: string | undefined) {
   if (!message) return false;
-  return /rate limit|too many requests|429|503|502|504|timeout|timed out|fetch failed|ECONNRESET|ECONNREFUSED|socket|network|503|cloudflare|capacity|exceeded/i.test(
+  return /rate limit|too many requests|429|503|502|504|timeout|timed out|fetch failed|ECONNRESET|ECONNREFUSED|socket|network|cloudflare|capacity|exceeded|HTTP 429|HTTP 503/i.test(
     message,
   );
 }
@@ -210,10 +210,7 @@ async function solanaAccountExistsOnce(rpcUrl: string, address: string) {
       cache: "no-store",
     });
     if (!response.ok) {
-      return {
-        exists: false,
-        error: `HTTP ${response.status} from Solana RPC`,
-      };
+      return { exists: false, error: `HTTP ${response.status} from Solana RPC` };
     }
     const json = (await response.json()) as {
       result?: { value?: unknown };
