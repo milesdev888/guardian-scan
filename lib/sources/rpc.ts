@@ -34,6 +34,12 @@ export const SELECTORS = {
   transferOwnership: ["f2fde38b"],
 } as const;
 
+/** Public Solana RPCs tried after SOLANA_RPC_URL when the primary is rate-limited. */
+export const SOLANA_RPC_FALLBACKS = [
+  "https://solana-rpc.publicnode.com",
+  "https://api.mainnet-beta.solana.com",
+] as const;
+
 const robinhoodChain = defineChain({
   id: 4663,
   name: "Robinhood Chain",
@@ -183,7 +189,14 @@ export function isBurnAddress(address: string | null | undefined) {
   );
 }
 
-export async function solanaAccountExists(rpcUrl: string, address: string) {
+function isRetryableSolanaRpcError(message: string | undefined) {
+  if (!message) return false;
+  return /rate limit|too many requests|429|503|502|504|timeout|timed out|fetch failed|ECONNRESET|ECONNREFUSED|socket|network|503|cloudflare|capacity|exceeded/i.test(
+    message,
+  );
+}
+
+async function solanaAccountExistsOnce(rpcUrl: string, address: string) {
   try {
     const response = await fetch(rpcUrl, {
       method: "POST",
@@ -196,6 +209,12 @@ export async function solanaAccountExists(rpcUrl: string, address: string) {
       }),
       cache: "no-store",
     });
+    if (!response.ok) {
+      return {
+        exists: false,
+        error: `HTTP ${response.status} from Solana RPC`,
+      };
+    }
     const json = (await response.json()) as {
       result?: { value?: unknown };
       error?: { message?: string };
@@ -208,4 +227,17 @@ export async function solanaAccountExists(rpcUrl: string, address: string) {
       error: error instanceof Error ? error.message : "Solana RPC failed",
     };
   }
+}
+
+export async function solanaAccountExists(rpcUrl: string, address: string) {
+  const urls = [rpcUrl, ...SOLANA_RPC_FALLBACKS.filter((url) => url !== rpcUrl)];
+  let lastError: string | undefined;
+  for (const url of urls) {
+    const result = await solanaAccountExistsOnce(url, address);
+    if (result.exists) return result;
+    if (!result.error) return result; // confirmed missing
+    lastError = result.error;
+    if (!isRetryableSolanaRpcError(result.error)) return result;
+  }
+  return { exists: false, error: lastError ?? "Solana RPC failed" };
 }
