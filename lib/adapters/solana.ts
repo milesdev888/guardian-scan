@@ -24,12 +24,13 @@ import {
 import { classifyLp, lpCheckFrom, toLpLockInfo } from "@/lib/guardian/lp-tier";
 import { fetchDexToken, filterPairsForChain, identityFromPairs } from "@/lib/sources/dexscreener";
 import { fetchGoPlusSolana } from "@/lib/sources/goplus";
-import { fetchRugCheck } from "@/lib/sources/rugcheck";
+import { fetchRugCheck, labelFromKnownAccount } from "@/lib/sources/rugcheck";
 import { parseRugCheckMarkets } from "@/lib/sources/rugcheck-markets";
 import { solanaAccountExists } from "@/lib/sources/rpc";
 import {
   getAccountOwner,
   getMultipleAccountOwners,
+  getMultipleTokenAccountAuthorities,
   labelForProtocolOwner,
   METEORA_DAMM_V2_PROGRAM,
   resolveMintDeployer,
@@ -44,10 +45,15 @@ function asSolana(chain: ChainConfig): SolanaChainConfig {
   return chain;
 }
 
-/** Protocol vaults, bonding curves, escrows, and burns are not free-float holders. */
-function isExcludedConcentrationTag(tag: string | null | undefined): boolean {
+/**
+ * Protocol vaults, bonding curves, escrows, vesting lockers, and burns are not free-float.
+ * Matches RugCheck names (e.g. "Streamflow Vault") and on-chain protocol labels.
+ */
+export function isExcludedConcentrationTag(tag: string | null | undefined): boolean {
   if (!tag) return false;
-  return /pool vault|bonding curve|escrow|burn|blackhole|damm|locker/i.test(tag);
+  return /pool vault|bonding curve|escrow|burn|blackhole|damm|locker|streamflow|uncx|unicrypt|team\s*finance|goki|vest|vault|amm\b/i.test(
+    tag,
+  );
 }
 
 export class SolanaAdapter implements ChainAdapter {
@@ -146,13 +152,56 @@ export class SolanaAdapter implements ChainAdapter {
     const holderAddresses = rawHolders
       .map((row) => ("address" in row ? row.address : undefined) ?? "")
       .filter(Boolean);
-    const ownerLookup = await getMultipleAccountOwners(sol.rpcUrl, holderAddresses);
-    note("solana-holder-owners", !ownerLookup.error, ownerLookup.error);
 
-    for (const [addr, owner] of ownerLookup.owners) {
-      const protocolLabel = labelForProtocolOwner(owner);
-      if (protocolLabel && !accountLabels.has(addr)) {
-        accountLabels.set(addr, protocolLabel);
+    // RugCheck knownAccounts / lockers — labels Streamflow Vault, AMM, etc. by pubkey.
+    for (const [addr, meta] of Object.entries(rug.data?.knownAccounts ?? {})) {
+      const knownLabel = labelFromKnownAccount(meta);
+      if (knownLabel && !accountLabels.has(addr)) {
+        accountLabels.set(addr, knownLabel);
+      }
+    }
+    for (const locker of rug.data?.lockers ?? []) {
+      if (locker.address && !accountLabels.has(locker.address)) {
+        accountLabels.set(locker.address, locker.name || "Protocol locker escrow");
+      }
+    }
+
+    // AccountInfo.owner of an SPL token account is the Token Program — not the locker.
+    // Resolve the token authority (wallet / escrow PDA), then that account's program owner.
+    const authorityLookup = await getMultipleTokenAccountAuthorities(
+      sol.rpcUrl,
+      holderAddresses,
+    );
+    note("solana-holder-authorities", !authorityLookup.error, authorityLookup.error);
+
+    const authorityAddresses = [
+      ...new Set(
+        [...authorityLookup.authorities.values()].filter((value): value is string => Boolean(value)),
+      ),
+    ];
+    const programOwnerLookup = await getMultipleAccountOwners(sol.rpcUrl, [
+      ...holderAddresses,
+      ...authorityAddresses,
+    ]);
+    note("solana-holder-owners", !programOwnerLookup.error, programOwnerLookup.error);
+
+    for (const addr of holderAddresses) {
+      if (accountLabels.has(addr)) continue;
+      const authority = authorityLookup.authorities.get(addr) ?? null;
+      // Prefer labeling via the escrow/wallet program that owns the token authority.
+      const authorityProgram = authority
+        ? programOwnerLookup.owners.get(authority) ?? null
+        : null;
+      const viaAuthority = labelForProtocolOwner(authorityProgram);
+      if (viaAuthority) {
+        accountLabels.set(addr, viaAuthority);
+        continue;
+      }
+      // Also try the holder pubkey itself (rare: holder is a program PDA, not a token account).
+      const directOwner = programOwnerLookup.owners.get(addr) ?? null;
+      const viaDirect = labelForProtocolOwner(directOwner);
+      if (viaDirect) {
+        accountLabels.set(addr, viaDirect);
       }
     }
     for (const addr of holderAddresses) {
@@ -351,7 +400,12 @@ export class SolanaAdapter implements ChainAdapter {
       family: "solana",
       tokenAgeDays: ageDays,
       markets: marketParse.markets,
-      lockers: [],
+      lockers: (rug.data?.lockers ?? []).map((locker) => ({
+        programId: null,
+        type: locker.type,
+        name: locker.name,
+        unlockAt: null,
+      })),
     });
     checks.push(lpCheckFrom(lpAssessment));
 

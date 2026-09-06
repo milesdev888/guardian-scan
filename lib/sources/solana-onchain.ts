@@ -148,6 +148,14 @@ function keyPubkey(key: ParsedKey | undefined): string | null {
 /** Meteora DAMM v2 pool program — permanent-lock positions live under this owner. */
 export const METEORA_DAMM_V2_PROGRAM = "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG";
 
+/** Streamflow vesting (mainnet) — https://github.com/streamflow-finance/js-sdk */
+export const STREAMFLOW_PROGRAM = "strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m";
+export const STREAMFLOW_ALIGNED_PROGRAM = "aSTRM2NKoKxNnkmLWk9sz3k74gKBk9t7bpPrTGxMszH";
+/** Jupiter Lock */
+export const JUPITER_LOCK_PROGRAM = "LocpQgucEQHbqNABEYvBvwoxCPsSbG91A1QaQhQQqjn";
+/** Goki smart wallet */
+export const GOKI_SMART_WALLET_PROGRAM = "GokivDYuQXPZCWRkwMhdH2h91KpDQXBEmpgBgs55bnpH";
+
 export const SOLANA_BURN_ADDRESSES = new Set([
   "1nc1nerator11111111111111111111111111111111",
   "dead111111111111111111111111111111111111111",
@@ -155,15 +163,18 @@ export const SOLANA_BURN_ADDRESSES = new Set([
   "11111111111111111111111111111111",
 ]);
 
-/** Token-account owners that are protocol vaults / escrows, not free-float wallets. */
+/**
+ * Program IDs whose PDAs / vaults are not free-float.
+ * Labels must keep matching `isExcludedConcentrationTag` (escrow|locker|vault|…).
+ */
 export const PROTOCOL_OWNER_LABELS: Record<string, string> = {
   [METEORA_DAMM_V2_PROGRAM]: "Meteora pool vault",
-  // Streamflow
-  strmRqUCoQkeZbZyeFyBTvzmU9aNSv1VqdAdybM73Vv: "Streamflow escrow",
-  // Jupiter Lock
-  LocpQgucEQHbqNABEYvBvwoxCPsSbG91A1QaQhQQqjn: "Jupiter lock escrow",
-  // Goki
-  GokivDYuQXPZCWRkwMhdH2h91KpDQXBEmpgM8Y5qJiM: "Goki escrow",
+  [STREAMFLOW_PROGRAM]: "Streamflow locker escrow",
+  [STREAMFLOW_ALIGNED_PROGRAM]: "Streamflow aligned locker escrow",
+  [JUPITER_LOCK_PROGRAM]: "Jupiter lock escrow",
+  [GOKI_SMART_WALLET_PROGRAM]: "Goki locker escrow",
+  // Legacy Streamflow id still seen in some indexes
+  strmRqUCoQkeZbZyeFyBTvzmU9aNSv1VqdAdybM73Vv: "Streamflow locker escrow",
   // Raydium AMM / CLMM
   "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8": "Raydium pool vault",
   CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK: "Raydium CLMM vault",
@@ -176,4 +187,55 @@ export const PROTOCOL_OWNER_LABELS: Record<string, string> = {
 export function labelForProtocolOwner(owner: string | null | undefined): string | null {
   if (!owner) return null;
   return PROTOCOL_OWNER_LABELS[owner] ?? null;
+}
+
+const TOKEN_PROGRAMS = new Set([
+  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+]);
+
+/**
+ * For SPL token accounts, resolve the token authority (wallet / escrow PDA).
+ * AccountInfo.owner is the Token Program — useless for locker detection.
+ */
+export async function getMultipleTokenAccountAuthorities(
+  rpcUrl: string,
+  addresses: string[],
+): Promise<{ authorities: Map<string, string | null>; error?: string }> {
+  const authorities = new Map<string, string | null>();
+  if (!addresses.length) return { authorities };
+  const unique = [...new Set(addresses.filter(Boolean))];
+  type ParsedAccount = {
+    owner?: string;
+    data?:
+      | { parsed?: { info?: { owner?: string }; type?: string }; program?: string }
+      | string;
+  };
+  const result = await solanaRpc<{ value?: Array<ParsedAccount | null> }>(
+    rpcUrl,
+    "getMultipleAccounts",
+    [unique, { encoding: "jsonParsed" }],
+  );
+  if (!result.ok) return { authorities, error: result.error };
+  const values = result.data?.value ?? [];
+  unique.forEach((address, index) => {
+    const row = values[index];
+    if (!row) {
+      authorities.set(address, null);
+      return;
+    }
+    const programOwner = row.owner ?? "";
+    if (!TOKEN_PROGRAMS.has(programOwner)) {
+      // Not an SPL token account — authority N/A (may itself be a program PDA).
+      authorities.set(address, null);
+      return;
+    }
+    const data = row.data;
+    const parsed =
+      data && typeof data === "object" && "parsed" in data
+        ? (data.parsed as { info?: { owner?: string } } | undefined)
+        : undefined;
+    authorities.set(address, parsed?.info?.owner ?? null);
+  });
+  return { authorities };
 }

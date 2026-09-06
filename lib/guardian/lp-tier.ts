@@ -102,8 +102,10 @@ const TIMED_LOCKER_NAMES = [
 
 const TIMED_PROGRAMS = new Set([
   "LocpQgucEQHbqNABEYvBvwoxCPsSbG91A1QaQhQQqjn", // Jupiter Lock
-  "strmRqUCoQkeZbZyeFyBTvzmU9aNSv1VqdAdybM73Vv", // Streamflow
-  "GokivDYuQXPZCWRkwMhdH2h91KpDQXBEmpgM8Y5qJiM", // Goki
+  "strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m", // Streamflow vesting (mainnet)
+  "aSTRM2NKoKxNnkmLWk9sz3k74gKBk9t7bpPrTGxMszH", // Streamflow aligned
+  "strmRqUCoQkeZbZyeFyBTvzmU9aNSv1VqdAdybM73Vv", // Legacy Streamflow id (indexes)
+  "GokivDYuQXPZCWRkwMhdH2h91KpDQXBEmpgBgs55bnpH", // Goki smart wallet
 ]);
 
 const EVM_BURNS = new Set([
