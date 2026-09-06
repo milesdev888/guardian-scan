@@ -19,7 +19,7 @@ const c7 = classifyLp({
   lockers: [],
 });
 assert.equal(c7.tier, "PERMANENT", "Meteora DAMM v2 marketType must classify as PERMANENT");
-assert.equal(c7.emoji, "\ud83d\udd12");
+assert.equal(c7.emoji, "🔒");
 assert.equal(c7.status, "pass");
 assert.equal(c7.lifetimeEligible, true);
 assert.match(c7.summary, /PERMANENT/);

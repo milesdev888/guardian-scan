@@ -115,13 +115,13 @@ const EVM_BURNS = new Set([
 export function lpTierLabel(tier: LpTier): { emoji: string; label: string } {
   switch (tier) {
     case "BURNED":
-      return { emoji: "\ud83d\udd25", label: "BURNED" };
+      return { emoji: "🔥", label: "BURNED" };
     case "PERMANENT":
-      return { emoji: "\ud83d\udd12", label: "PERMANENT" };
+      return { emoji: "🔒", label: "PERMANENT" };
     case "TIMED":
-      return { emoji: "\u23f3", label: "TIMED" };
+      return { emoji: "⏳", label: "TIMED" };
     default:
-      return { emoji: "\u26a0\ufe0f", label: "UNVERIFIED" };
+      return { emoji: "⚠️", label: "UNVERIFIED" };
   }
 }
 
@@ -220,7 +220,7 @@ function classifyXrpl(input: LpObservation): LpAssessment {
   if (!x?.poolExists) {
     return unverified({
       poolType: null,
-      summary: "\u26a0\ufe0f UNVERIFIED \u2014 no XLS-30 AMM pool found for this currency + issuer.",
+      summary: "⚠️ UNVERIFIED — no XLS-30 AMM pool found for this currency + issuer.",
       detail:
         "XRPL has no Meteora DAMM analogue. Without an AMM pool, Guardian cannot treat LP as burned, permanent, or timed.",
       grade: "U",
@@ -241,9 +241,9 @@ function classifyXrpl(input: LpObservation): LpAssessment {
       unlockAt: null,
       lockerName: amm,
       poolType: "xls30_amm",
-      summary: `\ud83d\udd25 BURNED \u2014 ${burnedPct.toFixed(0)}% of AMM LP tokens sit at a blackhole address.`,
+      summary: `🔥 BURNED — ${burnedPct.toFixed(0)}% of AMM LP tokens sit at a blackhole address.`,
       detail:
-        "LP tokens at a known XRPL blackhole cannot be withdrawn. This is the lifetime-burn equivalent. PERMANENT does not apply on XRPL \u2014 there is no protocol-level DAMM lock.",
+        "LP tokens at a known XRPL blackhole cannot be withdrawn. This is the lifetime-burn equivalent. PERMANENT does not apply on XRPL — there is no protocol-level DAMM lock.",
       grade: "A",
       status: "pass",
     });
@@ -262,8 +262,8 @@ function classifyXrpl(input: LpObservation): LpAssessment {
       lockerName: amm,
       poolType: "xls30_amm",
       summary: expired
-        ? `\u23f3 TIMED \u2014 AMM LP escrow finished ${x.escrowUnlockAt.slice(0, 10)}.`
-        : `\u23f3 TIMED \u2014 AMM LP in escrow until ${x.escrowUnlockAt.slice(0, 10)}.`,
+        ? `⏳ TIMED — AMM LP escrow finished ${x.escrowUnlockAt.slice(0, 10)}.`
+        : `⏳ TIMED — AMM LP in escrow until ${x.escrowUnlockAt.slice(0, 10)}.`,
       detail: short
         ? "An escrow that ends in under 90 days is not a lasting lock. Flagged, not a pass. XRPL has no PERMANENT AMM tier."
         : "LP tokens in an Escrow with FinishAfter. Badge eligibility expires at FinishAfter.",
@@ -279,10 +279,10 @@ function classifyXrpl(input: LpObservation): LpAssessment {
     freePct: clampPct(100 - burnedPct - (lockedPct ?? 0)),
     lockerName: amm,
     poolType: "xls30_amm",
-    summary: `\u26a0\ufe0f UNVERIFIED \u2014 XLS-30 AMM exists (${amm}); LP tokens remain transferable.`,
+    summary: `⚠️ UNVERIFIED — XLS-30 AMM exists (${amm}); LP tokens remain transferable.`,
     detail:
       x.facts ??
-      "XRPL AMM LP tokens can be withdrawn unless burned or escrowed. Guardian will not invent a PERMANENT pass \u2014 there is no DAMM v2 analogue on XRPL.",
+      "XRPL AMM LP tokens can be withdrawn unless burned or escrowed. Guardian will not invent a PERMANENT pass — there is no DAMM v2 analogue on XRPL.",
     grade: "C",
     status: "flag",
   });
@@ -325,7 +325,7 @@ function classifySolana(input: LpObservation): LpAssessment {
       unlockAt: null,
       lockerName: lockerName,
       poolType,
-      summary: `\ud83d\udd25 BURNED \u2014 ${burnedPct.toFixed(0)}% of LP is at a burn address.`,
+      summary: `🔥 BURNED — ${burnedPct.toFixed(0)}% of LP is at a burn address.`,
       detail: "Burned LP cannot be withdrawn. This is a lifetime lock tier.",
       grade: "A",
       status: "pass",
@@ -341,7 +341,7 @@ function classifySolana(input: LpObservation): LpAssessment {
       unlockAt: null,
       lockerName: lockerName ?? "Meteora DAMM v2",
       poolType,
-      summary: `\ud83d\udd12 PERMANENT \u2014 ${Math.round(lockedPct ?? 0)}% locked in a protocol-level position (${poolType}).`,
+      summary: `🔒 PERMANENT — ${Math.round(lockedPct ?? 0)}% locked in a protocol-level position (${poolType}).`,
       detail:
         "Meteora DAMM v2 (and equivalent permanent positions) do not mint transferable LP tokens that a team wallet can pull. This is a lifetime lock tier.",
       grade: "A",
@@ -358,7 +358,7 @@ function classifySolana(input: LpObservation): LpAssessment {
       unlockAt: null,
       lockerName: lockerName ?? poolType,
       poolType,
-      summary: `\ud83d\udd12 PERMANENT \u2014 LP mint is burned and ${Math.round(lockedPct ?? 0)}% is locked with no unlock date.`,
+      summary: `🔒 PERMANENT — LP mint is burned and ${Math.round(lockedPct ?? 0)}% is locked with no unlock date.`,
       detail: "No transferable LP mint remains. Treated as a protocol-level permanent lock.",
       grade: "A",
       status: "pass",
@@ -378,8 +378,8 @@ function classifySolana(input: LpObservation): LpAssessment {
       lockerName,
       poolType,
       summary: expired
-        ? `\u23f3 TIMED \u2014 lock expired${earliestUnlock ? ` ${earliestUnlock.slice(0, 10)}` : ""}.`
-        : `\u23f3 TIMED \u2014 ${Math.round(lockedPct ?? 0)}% locked via ${lockerName ?? "a known locker"}${
+        ? `⏳ TIMED — lock expired${earliestUnlock ? ` ${earliestUnlock.slice(0, 10)}` : ""}.`
+        : `⏳ TIMED — ${Math.round(lockedPct ?? 0)}% locked via ${lockerName ?? "a known locker"}${
             earliestUnlock ? `; unlock ${earliestUnlock.slice(0, 10)}` : ""
           }.`,
       detail: short
@@ -398,7 +398,7 @@ function classifySolana(input: LpObservation): LpAssessment {
       freePct: clampPct(100 - (lockedPct ?? 0) - burnedPct),
       lockerName,
       poolType,
-      summary: `\u26a0\ufe0f UNVERIFIED \u2014 ${Math.round(lockedPct ?? 0)}% reported locked in an unknown contract or wallet.`,
+      summary: `⚠️ UNVERIFIED — ${Math.round(lockedPct ?? 0)}% reported locked in an unknown contract or wallet.`,
       detail:
         "Unknown lockers are a warning, never a pass. Guardian will not treat an unlabeled wallet as a lock, even at 100%.",
       grade: "C",
@@ -415,8 +415,8 @@ function classifySolana(input: LpObservation): LpAssessment {
     poolType,
     summary:
       lockedPct == null
-        ? "\u26a0\ufe0f UNVERIFIED \u2014 lock percent missing for listed pools."
-        : `\u26a0\ufe0f UNVERIFIED \u2014 ${Math.round(lockedPct)}% locked; remainder can be pulled.`,
+        ? "⚠️ UNVERIFIED — lock percent missing for listed pools."
+        : `⚠️ UNVERIFIED — ${Math.round(lockedPct)}% locked; remainder can be pulled.`,
     detail: established
       ? "Unlocked AMM LP on an established token is a pattern, not the same rug vector as a day-old launch."
       : "Unlocked LP on a new mint is the standard Solana rug vector.",
@@ -480,7 +480,7 @@ function classifyEvm(input: LpObservation): LpAssessment {
       unlockAt: null,
       lockerName,
       poolType,
-      summary: `\ud83d\udd25 BURNED \u2014 ${burnedPct.toFixed(0)}% of tracked LP is at a burn address.`,
+      summary: `🔥 BURNED — ${burnedPct.toFixed(0)}% of tracked LP is at a burn address.`,
       detail: "Burned LP cannot be withdrawn. This is a lifetime lock tier.",
       grade: "A",
       status: "pass",
@@ -499,7 +499,7 @@ function classifyEvm(input: LpObservation): LpAssessment {
       unlockAt,
       lockerName,
       poolType,
-      summary: `\u23f3 TIMED \u2014 ${timedPct.toFixed(0)}% in ${lockerName ?? "a known locker"}${
+      summary: `⏳ TIMED — ${timedPct.toFixed(0)}% in ${lockerName ?? "a known locker"}${
         unlockAt ? `; unlock ${unlockAt.slice(0, 10)}` : ""
       }.`,
       detail: short
@@ -520,10 +520,10 @@ function classifyEvm(input: LpObservation): LpAssessment {
       freePct,
       lockerName,
       poolType,
-      summary: `\u26a0\ufe0f UNVERIFIED \u2014 LP sits in an unknown contract or wallet (${Math.round(
+      summary: `⚠️ UNVERIFIED — LP sits in an unknown contract or wallet (${Math.round(
         unknownLockedPct + timedPct + burnedPct,
       )}% tagged locked).`,
-      detail: "Unknown lockers are a warning, never a pass \u2014 including GoPlus is_locked flags on unlabeled addresses.",
+      detail: "Unknown lockers are a warning, never a pass — including GoPlus is_locked flags on unlabeled addresses.",
       grade: "C",
       status: "flag",
     });
@@ -536,7 +536,7 @@ function classifyEvm(input: LpObservation): LpAssessment {
     freePct: clampPct(100 - lockedPct),
     lockerName,
     poolType,
-    summary: `\u26a0\ufe0f UNVERIFIED \u2014 ${Math.round(lockedPct)}% of tracked LP is locked or burned.`,
+    summary: `⚠️ UNVERIFIED — ${Math.round(lockedPct)}% of tracked LP is locked or burned.`,
     detail: established
       ? "Unlocked AMM LP on an established token is a pattern, not the same rug vector as a day-old launch."
       : "Unlocked LP on a new DEX launch is the classic rug vector.",
