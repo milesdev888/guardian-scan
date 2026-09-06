@@ -1,349 +1,405 @@
-import { fetchJson, fetchText } from "@/lib/http";
-import { CHAINS } from "@/lib/chains/config";
+import { asArray, asRecord, fetchJson, fetchText, num, str } from "@/lib/http";
+import { XRPL } from "@/lib/chains/config";
+import type { XrplIssuance } from "@/lib/guardian/types";
 
-const XRPL_RPC = CHAINS.XRPL.rpc;
-const ACCOUNT_LINES_LIMIT = 400;
-const ACCOUNT_LINES_MAX_PAGES = 20;
+export const LSF_DISABLE_MASTER = 0x00_10_00_00;
+export const LSF_NO_FREEZE = 0x00_20_00_00;
+export const LSF_GLOBAL_FREEZE = 0x00_40_00_00;
+export const LSF_DEFAULT_RIPPLE = 0x00_80_00_00;
+export const LSF_REQUIRE_DEST_TAG = 0x00_02_00_00;
+export const LSF_REQUIRE_AUTH = 0x00_04_00_00;
+export const LSF_DISALLOW_XRP = 0x00_08_00_00;
+export const LSF_DEPOSIT_AUTH = 0x01_00_00_00;
+export const LSF_ALLOW_TRUSTLINE_CLAWBACK = 0x80_00_00_00;
 
+/** Well-known unusable accounts. RegularKey pointing here cannot sign. */
 export const XRPL_BLACKHOLES = new Set([
-  "rrrrrrrrrrrrrrrrrrrrBZbvji",
-  "rrrrrrrrrrrrrrrrrrrrrhoLvTp",
+  "rrrrrrrrrrrrrrrrrrrrBZbvji", // ACCOUNT_ZERO
+  "rrrrrrrrrrrrrrrrrrrrrhoLvTp", // ACCOUNT_ONE
 ]);
 
-export const LSF_PASSWORD_SPENT = 0x00010000;
-export const LSF_REQUIRE_DEST_TAG = 0x00020000;
-export const LSF_REQUIRE_AUTH = 0x00040000;
-export const LSF_DISALLOW_XRP = 0x00080000;
-export const LSF_DISABLE_MASTER = 0x00100000;
-export const LSF_NO_FREEZE = 0x00200000;
-export const LSF_GLOBAL_FREEZE = 0x00400000;
-export const LSF_DEFAULT_RIPPLE = 0x00800000;
-export const LSF_DEPOSIT_AUTH = 0x01000000;
-export const LSF_AMM = 0x02000000;
-export const LSF_CLAWBACK = 0x80000000;
+export const TRANSFER_RATE_NEUTRAL = 1_000_000_000;
 
-interface JsonRpcOk<T> {
-  result: T & { status?: string; error?: string; error_message?: string };
-}
+const MAX_LINE_PAGES = 20;
+const LINE_LIMIT = 400;
 
-export class XrplRpcError extends Error {
-  constructor(
-    message: string,
-    readonly code?: string,
-  ) {
-    super(message);
-    this.name = "XrplRpcError";
-  }
-}
-
-async function xrplRpc<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-  const body = {
-    method,
-    params: [{ ...params, ledger_index: params.ledger_index ?? "validated" }],
-  };
-  const json = await fetchJson<JsonRpcOk<T>>(XRPL_RPC, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const result = json.result;
-  if (!result) {
-    throw new XrplRpcError(`Empty XRPL result for ${method}`);
-  }
-  if (result.status === "error" || result.error) {
-    throw new XrplRpcError(
-      result.error_message || result.error || `XRPL ${method} failed`,
-      result.error,
-    );
-  }
-  return result as T;
-}
-
-export interface XrplAccountInfo {
+export type XrplAccountRoot = {
   Account: string;
-  Balance: string;
   Flags: number;
+  RegularKey?: string;
   Domain?: string;
   TransferRate?: number;
-  RegularKey?: string;
-  Sequence: number;
-  OwnerCount: number;
+  Sequence?: number;
+  Balance?: string;
+};
+
+export type XrplTrustLine = {
+  account: string;
+  balance: number;
+  currency: string;
+  limit: string | null;
+  limitPeer: string | null;
+  freeze: boolean;
+};
+
+export type XrplAmmInfo = {
+  account: string;
+  lpCurrency: string;
+  lpIssuer: string;
+  lpValue: number | null;
+  tradingFee: number | null;
+  amount: unknown;
+  amount2: unknown;
+};
+
+export type TomlVerdict = {
+  domain: string | null;
+  fetched: boolean;
+  namedIssuer: boolean;
+  namedToken: boolean;
+  error?: string;
+};
+
+type RpcEnvelope = {
+  result?: Record<string, unknown>;
+  error?: string;
+  error_message?: string;
+};
+
+export function hasFlag(flags: number | null | undefined, bit: number) {
+  return Boolean((flags ?? 0) & bit);
 }
 
-export interface XrplAccountInfoResult {
-  account_data: XrplAccountInfo;
-  ledger_current_index?: number;
-  ledger_index?: number;
+export function isBlackholeAddress(address: string | null | undefined) {
+  if (!address) return false;
+  return XRPL_BLACKHOLES.has(address);
 }
 
-export async function accountInfo(account: string): Promise<XrplAccountInfo> {
-  const result = await xrplRpc<XrplAccountInfoResult>("account_info", {
-    account,
-    signer_lists: true,
-  });
-  return result.account_data;
+export function transferRatePct(rate: number | null | undefined): number {
+  if (rate === null || rate === undefined || rate === 0) return 0;
+  return Math.max(0, (rate / TRANSFER_RATE_NEUTRAL - 1) * 100);
 }
 
-export interface XrplSignerList {
-  SignerList?: { SignerEntries?: unknown[]; SignerQuorum?: number };
-}
-
-export async function accountSignerList(account: string): Promise<boolean> {
-  try {
-    const result = await xrplRpc<XrplAccountInfoResult & { signer_lists?: XrplSignerList[] }>(
-      "account_info",
-      { account, signer_lists: true },
-    );
-    const lists = result.signer_lists ?? [];
-    return lists.some((entry) => (entry.SignerList?.SignerEntries?.length ?? 0) > 0);
-  } catch {
-    return false;
-  }
-}
-
-export function hasFlag(flags: number, bit: number): boolean {
-  return (flags & bit) === bit;
-}
-
-export function isBlackholed(info: XrplAccountInfo, hasSignerList: boolean): boolean {
-  const masterDisabled = hasFlag(info.Flags, LSF_DISABLE_MASTER);
-  const regular = info.RegularKey?.trim();
-  const usableRegular = Boolean(regular) && !XRPL_BLACKHOLES.has(regular!);
-  return masterDisabled && !usableRegular && !hasSignerList;
-}
-
-export function decodeDomain(hex?: string): string | null {
+export function decodeHexAscii(hex: string | null | undefined): string | null {
   if (!hex) return null;
+  const clean = hex.trim();
+  if (!/^[0-9a-fA-F]+$/.test(clean) || clean.length % 2 !== 0) return null;
   try {
-    const clean = hex.replace(/^0x/i, "");
-    if (!/^[0-9a-fA-F]+$/.test(clean) || clean.length % 2 !== 0) return null;
-    const bytes = Buffer.from(clean, "hex");
-    const text = bytes.toString("utf8").replace(/\0/g, "").trim();
+    const text = Buffer.from(clean, "hex").toString("utf8").replace(/\0/g, "").trim();
     if (!text || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)) return null;
-    return text.replace(/^https?:\/\//i, "").replace(/\/$/, "");
+    return text;
   } catch {
     return null;
   }
 }
 
-export function transferRatePercent(rate?: number): number | null {
-  if (rate == null || rate === 0 || rate === 1_000_000_000) return 0;
-  if (rate < 1_000_000_000) return null;
-  return ((rate - 1_000_000_000) / 1_000_000_000) * 100;
+export function domainHost(domainHexOrHost: string | null | undefined): string | null {
+  const raw = decodeHexAscii(domainHexOrHost) ?? domainHexOrHost?.trim() ?? null;
+  if (!raw) return null;
+  try {
+    const withProto = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const url = new URL(withProto);
+    return url.hostname.replace(/^www\./i, "") || null;
+  } catch {
+    return raw.replace(/^https?:\/\//i, "").split("/")[0]?.replace(/^www\./i, "") || null;
+  }
 }
 
-export interface XrplCurrencyAmount {
-  currency: string;
-  issuer: string;
-  value: string;
+export function decodeCurrency(code: string): string {
+  const trimmed = code.trim();
+  if (trimmed.length === 3) return trimmed;
+  if (/^[0-9A-Fa-f]{40}$/.test(trimmed)) {
+    const ascii = decodeHexAscii(trimmed);
+    if (ascii && /^[\x20-\x7E]+$/.test(ascii)) return ascii;
+  }
+  return trimmed;
 }
 
-export interface XrplAccountLine {
-  account: string;
-  balance: string;
-  currency: string;
-  limit: string;
-  limit_peer: string;
-  quality_in?: number;
-  quality_out?: number;
-  freeze?: boolean;
-  freeze_peer?: boolean;
-  no_ripple?: boolean;
-  no_ripple_peer?: boolean;
-  authorized?: boolean;
+export function currenciesMatch(requested: string, ledgerCode: string) {
+  const a = requested.trim();
+  const b = ledgerCode.trim();
+  if (a === b) return true;
+  return decodeCurrency(a).toLowerCase() === decodeCurrency(b).toLowerCase();
 }
 
-export interface XrplAccountLinesResult {
-  lines: XrplAccountLine[];
-  marker?: unknown;
+export function resolveLedgerCurrency(requested: string, codes: string[]): string | null {
+  const exact = codes.find((code) => code === requested.trim());
+  if (exact) return exact;
+  const hits = codes.filter((code) => currenciesMatch(requested, code));
+  return hits[0] ?? null;
 }
 
-export async function accountLinesAll(
+export type BlackholeAssessment = {
+  blackholed: boolean;
+  disableMaster: boolean;
+  regularKey: string | null;
+  regularKeyUsable: boolean;
+  signerList: boolean;
+  summary: string;
+};
+
+export function assessBlackhole(input: {
+  flags: number;
+  regularKey?: string | null;
+  signerList: boolean;
+}): BlackholeAssessment {
+  const disableMaster = hasFlag(input.flags, LSF_DISABLE_MASTER);
+  const regularKey = input.regularKey ?? null;
+  const regularKeyUsable = Boolean(regularKey) && !isBlackholeAddress(regularKey);
+  const blackholed = disableMaster && !regularKeyUsable && !input.signerList;
+  const summary = blackholed
+    ? `Master key disabled; ${
+        regularKey ? `regular key is the blackhole ${regularKey}` : "no regular key"
+      }; no signer list.`
+    : [
+        disableMaster ? "Master key disabled" : "Master key still enabled",
+        regularKeyUsable
+          ? `usable regular key ${regularKey}`
+          : regularKey
+            ? `regular key ${regularKey} (unusable)`
+            : "no regular key",
+        input.signerList ? "signer list present" : "no signer list",
+      ].join("; ");
+  return {
+    blackholed,
+    disableMaster,
+    regularKey,
+    regularKeyUsable,
+    signerList: input.signerList,
+    summary,
+  };
+}
+
+export function tomlNamesIssuer(toml: string, issuer: string, currency?: string | null) {
+  const blob = toml.replace(/\s+/g, " ");
+  const namedIssuer = blob.includes(issuer);
+  if (!namedIssuer) return { namedIssuer: false, namedToken: false };
+  if (!currency) return { namedIssuer: true, namedToken: true };
+  const display = decodeCurrency(currency);
+  const namedToken =
+    blob.includes(currency) ||
+    new RegExp(`currency\\s*=\\s*["']${escapeReg(display)}["']`, "i").test(toml) ||
+    toml.toLowerCase().includes(display.toLowerCase());
+  return { namedIssuer: true, namedToken };
+}
+
+function escapeReg(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function rpcUrl() {
+  return XRPL.rpcUrl;
+}
+
+export async function xrplRpc<T = Record<string, unknown>>(
+  method: string,
+  params: Record<string, unknown> = {},
+): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
+  const result = await fetchJson<RpcEnvelope>(rpcUrl(), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    timeoutMs: 18_000,
+    body: JSON.stringify({ method, params: [params] }),
+  });
+  if (!result.ok) return { ok: false, error: result.error };
+  const payload = result.data.result ?? result.data;
+  const record = asRecord(payload) ?? {};
+  const status = str(record.status);
+  const err = str(record.error) ?? str(result.data.error);
+  if (status === "error" || err) {
+    return {
+      ok: false,
+      error: str(record.error_message) ?? str(result.data.error_message) ?? err ?? "XRPL RPC error",
+    };
+  }
+  return { ok: true, data: record as T };
+}
+
+export async function fetchAccountInfo(account: string) {
+  const result = await xrplRpc<{ account_data?: Record<string, unknown> }>("account_info", {
+    account,
+    ledger_index: "validated",
+    signer_lists: true,
+  });
+  if (!result.ok) return { account: null as XrplAccountRoot | null, signerList: false, error: result.error };
+  const raw = asRecord(result.data.account_data);
+  if (!raw) return { account: null as XrplAccountRoot | null, signerList: false, error: "No account_data" };
+  const signerLists = asArray((result.data as { signer_lists?: unknown }).signer_lists);
+  return {
+    account: {
+      Account: str(raw.Account) ?? account,
+      Flags: num(raw.Flags) ?? 0,
+      RegularKey: str(raw.RegularKey) ?? undefined,
+      Domain: str(raw.Domain) ?? undefined,
+      TransferRate: num(raw.TransferRate) ?? undefined,
+      Sequence: num(raw.Sequence) ?? undefined,
+      Balance: str(raw.Balance) ?? undefined,
+    } satisfies XrplAccountRoot,
+    signerList: signerLists.length > 0,
+    error: undefined as string | undefined,
+  };
+}
+
+export async function fetchSignerList(account: string) {
+  const result = await xrplRpc<{ account_objects?: unknown[] }>("account_objects", {
+    account,
+    type: "signer_list",
+    ledger_index: "validated",
+  });
+  if (!result.ok) return { present: false, error: result.error };
+  return { present: asArray(result.data.account_objects).length > 0, error: undefined as string | undefined };
+}
+
+export async function fetchGatewayBalances(account: string) {
+  const result = await xrplRpc<{ obligations?: Record<string, string> }>("gateway_balances", {
+    account,
+    ledger_index: "validated",
+    strict: true,
+  });
+  if (!result.ok) return { issuances: [] as XrplIssuance[], error: result.error };
+  const obligations = asRecord(result.data.obligations) ?? {};
+  const issuances: XrplIssuance[] = Object.entries(obligations).map(([currency, value]) => ({
+    currency,
+    display: decodeCurrency(currency),
+    value: String(value),
+  }));
+  issuances.sort((a, b) => Number(b.value) - Number(a.value) || a.display.localeCompare(b.display));
+  return { issuances, error: undefined as string | undefined };
+}
+
+export async function fetchAccountLines(
   account: string,
-  options: { peer?: string; currency?: string } = {},
-): Promise<{ lines: XrplAccountLine[]; truncated: boolean }> {
-  const lines: XrplAccountLine[] = [];
-  let marker: unknown = undefined;
+  opts?: { currency?: string; peer?: string; maxPages?: number },
+) {
+  const lines: XrplTrustLine[] = [];
+  let marker: unknown;
   let pages = 0;
   let truncated = false;
-  do {
-    pages += 1;
-    if (pages > ACCOUNT_LINES_MAX_PAGES) {
-      truncated = true;
-      break;
-    }
+  let error: string | undefined;
+  const maxPages = opts?.maxPages ?? MAX_LINE_PAGES;
+
+  while (pages < maxPages) {
     const params: Record<string, unknown> = {
       account,
       ledger_index: "validated",
-      limit: ACCOUNT_LINES_LIMIT,
+      limit: LINE_LIMIT,
     };
-    if (options.peer) params.peer = options.peer;
-    if (options.currency) params.currency = options.currency;
+    if (opts?.peer) params.peer = opts.peer;
     if (marker) params.marker = marker;
-    const result = await xrplRpc<XrplAccountLinesResult>("account_lines", params);
-    lines.push(...(result.lines ?? []));
-    marker = result.marker;
-  } while (marker);
-  return { lines, truncated };
-}
-
-export interface XrplGatewayBalances {
-  obligations?: Record<string, string>;
-  balances?: Record<string, { currency: string; value: string }[]>;
-  assets?: Record<string, { currency: string; value: string }[]>;
-  frozen_balances?: Record<string, { currency: string; value: string }[]>;
-}
-
-export async function gatewayBalances(account: string): Promise<XrplGatewayBalances> {
-  try {
-    return await xrplRpc<XrplGatewayBalances>("gateway_balances", {
-      account,
-      ledger_index: "validated",
-    });
-  } catch {
-    return {};
-  }
-}
-
-export interface XrplIssuedCurrency {
-  currency: string;
-  display: string;
-  obligation: string | null;
-}
-
-export function decodeCurrencyCode(code: string): string {
-  if (!code) return code;
-  if (code.length <= 3) return code;
-  if (/^[0-9A-F]{40}$/i.test(code)) {
-    try {
-      const bytes = Buffer.from(code, "hex");
-      const text = bytes.toString("utf8").replace(/\0/g, "").trim();
-      if (text && /^[A-Za-z0-9._-]{1,20}$/.test(text)) return text;
-    } catch {
-      /* keep hex */
+    const result = await xrplRpc<{ lines?: unknown[]; marker?: unknown }>("account_lines", params);
+    if (!result.ok) {
+      error = result.error;
+      break;
     }
-  }
-  return code;
-}
-
-export function currenciesFromGateway(balances: XrplGatewayBalances): XrplIssuedCurrency[] {
-  const obligations = balances.obligations ?? {};
-  return Object.entries(obligations).map(([currency, obligation]) => ({
-    currency,
-    display: decodeCurrencyCode(currency),
-    obligation,
-  }));
-}
-
-export interface XrplAmmInfo {
-  amount?: string | XrplCurrencyAmount;
-  amount2?: string | XrplCurrencyAmount;
-  lp_token?: XrplCurrencyAmount;
-  account?: string;
-  trading_fee?: number;
-  auction_slot?: unknown;
-}
-
-export async function ammInfo(
-  asset: { currency: string; issuer?: string },
-  asset2: { currency: string; issuer?: string },
-): Promise<XrplAmmInfo | null> {
-  try {
-    const result = await xrplRpc<{ amm?: XrplAmmInfo }>("amm_info", { asset, asset2 });
-    return result.amm ?? null;
-  } catch {
-    return null;
-  }
-}
-
-export async function findIssuedAmm(
-  issuer: string,
-  currency: string,
-): Promise<XrplAmmInfo | null> {
-  const vsXrp = await ammInfo({ currency, issuer }, { currency: "XRP" });
-  if (vsXrp) return vsXrp;
-  return ammInfo({ currency: "XRP" }, { currency, issuer });
-}
-
-export interface XrplEscrow {
-  Account: string;
-  Destination: string;
-  Amount: string | XrplCurrencyAmount;
-  FinishAfter?: number;
-  CancelAfter?: number;
-  Condition?: string;
-}
-
-export async function accountEscrows(account: string): Promise<XrplEscrow[]> {
-  try {
-    const result = await xrplRpc<{ escrows?: XrplEscrow[] }>("account_objects", {
-      account,
-      type: "escrow",
-      ledger_index: "validated",
-    });
-    return result.escrows ?? [];
-  } catch {
-    return [];
-  }
-}
-
-export function tomlUrlForDomain(domain: string): string {
-  const host = domain.replace(/^https?:\/\//i, "").split("/")[0] ?? domain;
-  return `https://${host}/.well-known/xrp-ledger.toml`;
-}
-
-export interface XrplTomlEvidence {
-  domain: string;
-  url: string;
-  ok: boolean;
-  namesIssuer: boolean;
-  namesCurrency: boolean;
-  excerpt: string | null;
-}
-
-function looksLikeHtml(body: string): boolean {
-  const head = body.slice(0, 200).trimStart().toLowerCase();
-  return head.startsWith("<!doctype") || head.startsWith("<html") || head.includes("<head");
-}
-
-export async function fetchXrplToml(
-  domain: string,
-  issuer: string,
-  currency?: string,
-): Promise<XrplTomlEvidence> {
-  const url = tomlUrlForDomain(domain);
-  const evidence: XrplTomlEvidence = {
-    domain,
-    url,
-    ok: false,
-    namesIssuer: false,
-    namesCurrency: false,
-    excerpt: null,
-  };
-  try {
-    const body = await fetchText(url, { timeoutMs: 8_000 });
-    if (!body || looksLikeHtml(body)) return evidence;
-    evidence.ok = true;
-    evidence.namesIssuer = body.includes(issuer);
-    if (currency) {
-      const display = decodeCurrencyCode(currency);
-      evidence.namesCurrency =
-        body.includes(currency) || (display !== currency && body.includes(display));
+    for (const raw of asArray(result.data.lines)) {
+      const row = asRecord(raw);
+      if (!row) continue;
+      const currency = str(row.currency);
+      if (!currency) continue;
+      if (opts?.currency && !currenciesMatch(opts.currency, currency)) continue;
+      lines.push({
+        account: str(row.account) ?? "",
+        balance: num(row.balance) ?? 0,
+        currency,
+        limit: str(row.limit),
+        limitPeer: str(row.limit_peer),
+        freeze: Boolean(row.freeze) || Boolean(row.freeze_peer),
+      });
     }
-    evidence.excerpt = body.slice(0, 280).replace(/\s+/g, " ").trim();
-    return evidence;
-  } catch {
-    return evidence;
+    pages += 1;
+    marker = result.data.marker;
+    if (!marker) break;
   }
+  if (marker) truncated = true;
+  return { lines, pages, truncated, sampled: lines.length, error };
 }
 
-export async function accountCurrencies(account: string): Promise<{
-  receive_currencies?: string[];
-  send_currencies?: string[];
-}> {
-  try {
-    return await xrplRpc("account_currencies", { account, ledger_index: "validated" });
-  } catch {
-    return {};
+export async function fetchAmmInfo(currency: string, issuer: string, quote?: { currency: string; issuer?: string }) {
+  const asset = { currency, issuer };
+  const asset2 = quote?.issuer
+    ? { currency: quote.currency, issuer: quote.issuer }
+    : { currency: quote?.currency ?? "XRP" };
+  const attempts = [
+    { asset, asset2 },
+    { asset: asset2, asset2: asset },
+  ];
+  let lastError: string | undefined;
+  for (const params of attempts) {
+    const result = await xrplRpc<{ amm?: Record<string, unknown> }>("amm_info", params);
+    if (!result.ok) {
+      lastError = result.error;
+      continue;
+    }
+    const amm = asRecord(result.data.amm);
+    if (!amm) continue;
+    const lp = asRecord(amm.lp_token);
+    return {
+      amm: {
+        account: str(amm.account) ?? "",
+        lpCurrency: str(lp?.currency) ?? "",
+        lpIssuer: str(lp?.issuer) ?? str(amm.account) ?? "",
+        lpValue: num(lp?.value),
+        tradingFee: num(amm.trading_fee),
+        amount: amm.amount,
+        amount2: amm.amount2,
+      } satisfies XrplAmmInfo,
+      error: undefined as string | undefined,
+    };
   }
+  return { amm: null as XrplAmmInfo | null, error: lastError };
+}
+
+export async function fetchEscrows(account: string) {
+  const result = await xrplRpc<{ account_objects?: unknown[] }>("account_objects", {
+    account,
+    type: "escrow",
+    ledger_index: "validated",
+    limit: 200,
+  });
+  if (!result.ok) return { escrows: [] as Array<{ finishAfter: string | null }>, error: result.error };
+  const escrows = asArray(result.data.account_objects).map((raw) => {
+    const row = asRecord(raw);
+    const finish = num(row?.FinishAfter);
+    return {
+      finishAfter: finish ? new Date(rippleTimeToUnix(finish) * 1000).toISOString() : null,
+    };
+  });
+  return { escrows, error: undefined as string | undefined };
+}
+
+/** Ripple epoch: seconds since 2000-01-01 00:00 UTC. */
+export function rippleTimeToUnix(rippleTime: number) {
+  return rippleTime + 946_684_800;
+}
+
+export async function fetchXrplToml(host: string, issuer: string, currency?: string | null): Promise<TomlVerdict> {
+  const hosts = [host.replace(/^www\./i, "")];
+  if (!host.startsWith("www.")) hosts.push(`www.${hosts[0]}`);
+  let lastError: string | undefined;
+  for (const name of hosts) {
+    const url = `https://${name}/.well-known/xrp-ledger.toml`;
+    const result = await fetchText(url, { timeoutMs: 10_000 });
+    if (!result.ok) {
+      lastError = result.status ? `HTTP ${result.status}` : result.error;
+      continue;
+    }
+    const body = result.data.trim();
+    if (!body || body.startsWith("<") || /<!DOCTYPE/i.test(body)) {
+      lastError = "Toml endpoint returned HTML";
+      continue;
+    }
+    const named = tomlNamesIssuer(body, issuer, currency);
+    return {
+      domain: name,
+      fetched: true,
+      namedIssuer: named.namedIssuer,
+      namedToken: named.namedToken,
+    };
+  }
+  return { domain: host, fetched: false, namedIssuer: false, namedToken: false, error: lastError };
+}
+
+export function issuedAmountFromIssuerLine(balance: number) {
+  // From the issuer's view a negative RippleState balance means the peer holds issued tokens.
+  return Math.abs(balance);
 }
