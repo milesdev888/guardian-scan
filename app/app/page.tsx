@@ -15,12 +15,13 @@ export default async function AppPage({ searchParams }: PageProps<"/app">) {
   const rawAddress = readParam(params.address);
   const address = rawAddress?.trim() ?? "";
   const chain = readParam(params.chain);
+  const currency = readParam(params.currency);
 
   let result: ScanResponse | null = null;
   if (rawAddress !== undefined && address === "") {
     result = { kind: "error", error: "Paste a contract or mint address." };
   } else if (address) {
-    result = await runScan({ address, chain });
+    result = await runScan({ address, chain, currency });
   }
 
   return (

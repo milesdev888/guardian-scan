@@ -18,7 +18,7 @@ export function AddressInput({ defaultValue }: { defaultValue: string }) {
           event.currentTarget.value = text;
           event.currentTarget.form?.requestSubmit();
         }}
-        placeholder="Paste a Solana mint or 0x contract"
+        placeholder="Paste a Solana mint, 0x contract, or XRPL r-address"
         autoFocus
         autoComplete="off"
         spellCheck={false}

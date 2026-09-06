@@ -11,9 +11,11 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
   const address = readParam(params.address)?.trim();
   if (address) {
     const chain = readParam(params.chain);
-    const suffix = chain
-      ? `&chain=${encodeURIComponent(chain)}`
-      : "";
+    const currency = readParam(params.currency);
+    const extra = new URLSearchParams();
+    if (chain) extra.set("chain", chain);
+    if (currency) extra.set("currency", currency);
+    const suffix = extra.toString() ? `&${extra.toString()}` : "";
     redirect(`/app?address=${encodeURIComponent(address)}${suffix}`);
   }
   return (
