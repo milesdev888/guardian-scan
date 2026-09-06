@@ -145,6 +145,13 @@ export type Holder = {
   locked: boolean | null;
 };
 
+/** Raw vs free-float top-10 — Phase 1 free-float math with v2.1 dual display. */
+export type ConcentrationSummary = {
+  rawTop10: number;
+  adjustedTop10: number;
+  excludedPct: number;
+};
+
 export type SourceStatus = {
   id: string;
   ok: boolean;
@@ -172,6 +179,7 @@ export type GuardianReport = {
   holders: Holder[];
   sources: SourceStatus[];
   lp?: LpLockInfo;
+  concentration?: ConcentrationSummary;
 };
 
 export type ScanRequest = {

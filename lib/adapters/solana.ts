@@ -182,10 +182,16 @@ export class SolanaAdapter implements ChainAdapter {
     });
 
     const freeFloatHolders = holders.filter((row) => !isExcludedConcentrationTag(row.tag));
+    const rawTop10 = holders.reduce((sum, row) => sum + (row.percent ?? 0), 0);
     const top10 = freeFloatHolders.reduce((sum, row) => sum + (row.percent ?? 0), 0);
     const excludedPct = holders
       .filter((row) => isExcludedConcentrationTag(row.tag))
       .reduce((sum, row) => sum + (row.percent ?? 0), 0);
+    const concentration = {
+      rawTop10: Math.min(100, rawTop10),
+      adjustedTop10: Math.min(100, top10),
+      excludedPct: Math.min(100, excludedPct),
+    };
 
     const pools: LiquidityPool[] = (pairs.length ? pairs : dex.pairs).slice(0, 6).map((pair) => ({
       dex: pair.dexId,
@@ -365,8 +371,9 @@ export class SolanaAdapter implements ChainAdapter {
               title: "Holder concentration",
               status: "unknown",
               grade: "U",
-              summary: "All listed accounts are pool vaults, escrows, or burns.",
-              detail: `Excluded ${formatPct(excludedPct)} in protocol / burn accounts from free-float math.`,
+              summary: `Top 10 hold ${formatPct(concentration.rawTop10)} raw · all excluded as vaults/locks/burns.`,
+              detail: `Excluded ${formatPct(concentration.excludedPct)} in protocol / burn accounts from free-float math.`,
+              evidence: { ...concentration },
             })
           : top10 >= 70
             ? check({
@@ -374,18 +381,24 @@ export class SolanaAdapter implements ChainAdapter {
                 title: "Holder concentration",
                 status: "flag",
                 grade: top10 >= 90 ? "F" : "D",
-                summary: `Top free-float wallets hold ${formatPct(top10)} of supply.`,
-                detail: `Concentration uses human-controlled unlocked wallets only. Excluded ${formatPct(
-                  excludedPct,
+                summary: `Top 10 hold ${formatPct(concentration.rawTop10)} raw · ${formatPct(
+                  concentration.adjustedTop10,
+                )} excluding locked & LP.`,
+                detail: `Grade keys off free-float. Excluded ${formatPct(
+                  concentration.excludedPct,
                 )} in pool vaults, bonding curves, locker escrows, and burns.`,
+                evidence: { ...concentration },
               })
             : check({
                 id: "holder_concentration",
                 title: "Holder concentration",
                 status: "pass",
                 grade: top10 >= 50 ? "B" : "A",
-                summary: `Top free-float wallets hold ${formatPct(top10)} of supply.`,
+                summary: `Top 10 hold ${formatPct(concentration.rawTop10)} raw · ${formatPct(
+                  concentration.adjustedTop10,
+                )} excluding locked & LP.`,
                 detail: `${freeFloatHolders.length} free-float accounts scored; protocol vaults and burns labeled but excluded.`,
+                evidence: { ...concentration },
               }),
     );
 
@@ -532,6 +545,7 @@ export class SolanaAdapter implements ChainAdapter {
       holders,
       sources,
       lp: toLpLockInfo(lpAssessment),
+      concentration,
     };
   }
 }
