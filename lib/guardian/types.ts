@@ -1,4 +1,4 @@
-export type Family = "solana" | "evm";
+export type Family = "solana" | "evm" | "xrpl";
 
 export type Grade = "A" | "B" | "C" | "D" | "F" | "U";
 
@@ -46,7 +46,20 @@ export type SolanaChainConfig = {
   rollout: "live";
 };
 
-export type ChainConfig = EvmChainConfig | SolanaChainConfig;
+export type XrplChainConfig = {
+  family: "xrpl";
+  id: "xrpl";
+  name: string;
+  shortName: string;
+  rpcUrl: string;
+  explorerUrl: string;
+  dexScreenerChain: "xrpl";
+  dexes: DexConfig[];
+  announcementTweet: string;
+  rollout: "live";
+};
+
+export type ChainConfig = EvmChainConfig | SolanaChainConfig | XrplChainConfig;
 
 export type DetectedFamily = {
   family: Family;
@@ -85,6 +98,21 @@ export type TokenIdentity = {
   symbol: string | null;
   decimals: number | null;
   imageUrl: string | null;
+  currency?: string | null;
+};
+
+export type LpTier = "BURNED" | "PERMANENT" | "TIMED" | "UNVERIFIED";
+
+export type LpLockInfo = {
+  tier: LpTier;
+  lockedPct: number | null;
+  burnedPct: number | null;
+  freePct: number | null;
+  unlockAt: string | null;
+  lockerName: string | null;
+  poolType: string | null;
+  lifetimeEligible: boolean;
+  badgeEligible: boolean;
 };
 
 export type Copycat = {
@@ -143,11 +171,19 @@ export type GuardianReport = {
   pools: LiquidityPool[];
   holders: Holder[];
   sources: SourceStatus[];
+  lp?: LpLockInfo;
 };
 
 export type ScanRequest = {
   address: string;
   chain?: string;
+  currency?: string;
+};
+
+export type XrplIssuance = {
+  currency: string;
+  display: string;
+  value: string;
 };
 
 export type ScanResponse =
@@ -163,6 +199,14 @@ export type ScanResponse =
       family: Family;
       address: string;
       presence: PresenceMatch[];
+      message: string;
+    }
+  | {
+      kind: "xrpl-issuances";
+      family: "xrpl";
+      address: string;
+      presence: PresenceMatch[];
+      issuances: XrplIssuance[];
       message: string;
     }
   | {

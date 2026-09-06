@@ -1,4 +1,9 @@
-import type { ChainConfig, EvmChainConfig, SolanaChainConfig } from "@/lib/guardian/types";
+import type {
+  ChainConfig,
+  EvmChainConfig,
+  SolanaChainConfig,
+  XrplChainConfig,
+} from "@/lib/guardian/types";
 
 function env(name: string, fallback: string): string {
   const value = process.env[name];
@@ -125,7 +130,21 @@ const EVM_CHAINS: EvmChainConfig[] = [
   },
 ];
 
-export const CHAINS: ChainConfig[] = [SOLANA, ...EVM_CHAINS];
+export const XRPL: XrplChainConfig = {
+  family: "xrpl",
+  id: "xrpl",
+  name: "XRP Ledger",
+  shortName: "XRPL",
+  rpcUrl: env("XRPL_RPC_URL", "https://xrplcluster.com"),
+  explorerUrl: "https://xrpscan.com",
+  dexScreenerChain: "xrpl",
+  dexes: [{ id: "amm", name: "XLS-30 AMM", kind: "other" }],
+  announcementTweet:
+    "Guardian now scans XRPL. Paste an r-address — issuer flags, freeze, transfer rate, trust lines, domain.toml, XLS-30 AMM. No chain dropdown.",
+  rollout: "live",
+};
+
+export const CHAINS: ChainConfig[] = [SOLANA, ...EVM_CHAINS, XRPL];
 
 export const EVM_CHAIN_LIST = EVM_CHAINS;
 

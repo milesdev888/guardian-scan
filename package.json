@@ -9,7 +9,8 @@
     "dev": "next dev --hostname 0.0.0.0 --port 4317",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0 --port ${PORT:-4317}",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "npx --yes tsx lib/chains/detect.test.ts && npx --yes tsx lib/sources/xrpl.test.ts && npx --yes tsx lib/guardian/lp-tier.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

@@ -78,3 +78,44 @@ export function asRecord(value: unknown): Record<string, unknown> | null {
 export function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
+
+export async function fetchText(
+  url: string,
+  init: RequestInit & { timeoutMs?: number } = {},
+): Promise<FetchJsonResult<string>> {
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, headers, ...rest } = init;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      ...rest,
+      signal: controller.signal,
+      headers: {
+        accept: "text/plain, application/toml, */*",
+        "user-agent": "GuardianScan/2.0",
+        ...headers,
+      },
+      cache: "no-store",
+      redirect: "follow",
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        error: `HTTP ${response.status}${text ? `: ${text.slice(0, 180)}` : ""}`,
+      };
+    }
+    return { ok: true, status: response.status, data: text };
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.name === "AbortError"
+          ? "Request timed out"
+          : error.message
+        : "Network error";
+    return { ok: false, status: 0, error: message };
+  } finally {
+    clearTimeout(timer);
+  }
+}

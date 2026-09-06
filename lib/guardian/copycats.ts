@@ -1,11 +1,14 @@
-import type { Copycat } from "@/lib/guardian/types";
+import type { Copycat, Family } from "@/lib/guardian/types";
 import { fetchDexSearch, type DexPair } from "@/lib/sources/dexscreener";
 
 function sameTicker(a: string | null | undefined, b: string) {
   return (a ?? "").trim().toLowerCase() === b.trim().toLowerCase();
 }
 
-function sameAddress(a: string, b: string) {
+function sameAddress(a: string, b: string, family?: Family) {
+  if (family === "xrpl") {
+    return a === b || a.includes(b) || b.includes(a);
+  }
   return a.toLowerCase() === b.toLowerCase();
 }
 
@@ -15,6 +18,7 @@ export async function findCopycats(options: {
   chainName: string;
   dexScreenerChain: string;
   excludeAddress: string;
+  family?: Family;
 }): Promise<{ copycats: Copycat[]; error?: string }> {
   const ticker = options.ticker.trim();
   if (!ticker) return { copycats: [] };
@@ -28,14 +32,14 @@ export async function findCopycats(options: {
     }
     const token = tokenSide(pair, ticker);
     if (!token) return false;
-    return !sameAddress(token.address, options.excludeAddress);
+    return !sameAddress(token.address, options.excludeAddress, options.family);
   });
 
   const unique = new Map<string, DexPair>();
   for (const pair of sameChain) {
     const token = tokenSide(pair, ticker);
     if (!token) continue;
-    const key = token.address.toLowerCase();
+    const key = options.family === "xrpl" ? token.address : token.address.toLowerCase();
     const existing = unique.get(key);
     if (!existing || (pair.liquidityUsd ?? 0) > (existing.liquidityUsd ?? 0)) {
       unique.set(key, pair);

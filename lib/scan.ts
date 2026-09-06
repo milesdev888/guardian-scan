@@ -1,9 +1,11 @@
-import { EVM_CHAIN_LIST, getChain, SOLANA } from "@/lib/chains/config";
-import { detectFamily } from "@/lib/chains/detect";
+import { EVM_CHAIN_LIST, getChain, SOLANA, XRPL } from "@/lib/chains/config";
+import { detectFamily, splitXrplTokenId } from "@/lib/chains/detect";
 import { EvmAdapter } from "@/lib/adapters/evm";
 import { SolanaAdapter } from "@/lib/adapters/solana";
-import type { ChainAdapter } from "@/lib/adapters/types";
+import { XRPLAdapter } from "@/lib/adapters/xrpl";
+import type { ChainAdapter, ScanOptions } from "@/lib/adapters/types";
 import type {
+  Family,
   GuardianReport,
   PresenceMatch,
   ScanResponse,
@@ -11,26 +13,35 @@ import type {
 
 export const solanaAdapter = new SolanaAdapter();
 export const evmAdapter = new EvmAdapter();
+export const xrplAdapter = new XRPLAdapter();
 
-export function adapterFor(family: "solana" | "evm"): ChainAdapter {
-  return family === "solana" ? solanaAdapter : evmAdapter;
+export function adapterFor(family: Family): ChainAdapter {
+  if (family === "solana") return solanaAdapter;
+  if (family === "xrpl") return xrplAdapter;
+  return evmAdapter;
 }
 
 const cache = new Map<string, { expires: number; report: GuardianReport }>();
 const CACHE_MS = 45_000;
 
-function cached(chainId: string, address: string) {
-  const row = cache.get(`${chainId}:${address.toLowerCase()}`);
+function cacheKey(chainId: string, address: string, currency?: string) {
+  if (chainId === "xrpl") return `xrpl:${address}:${currency ?? ""}`;
+  return `${chainId}:${address.toLowerCase()}`;
+}
+
+function cached(chainId: string, address: string, currency?: string) {
+  const key = cacheKey(chainId, address, currency);
+  const row = cache.get(key);
   if (!row) return null;
   if (row.expires < Date.now()) {
-    cache.delete(`${chainId}:${address.toLowerCase()}`);
+    cache.delete(key);
     return null;
   }
   return row.report;
 }
 
-function remember(report: GuardianReport) {
-  cache.set(`${report.chain.id}:${report.token.address.toLowerCase()}`, {
+function remember(report: GuardianReport, address: string, currency?: string) {
+  cache.set(cacheKey(report.chain.id, address, currency), {
     expires: Date.now() + CACHE_MS,
     report,
   });
@@ -40,20 +51,34 @@ export async function probeEvmPresence(address: string): Promise<PresenceMatch[]
   return Promise.all(EVM_CHAIN_LIST.map((chain) => evmAdapter.probe(address, chain)));
 }
 
-export async function scanOnChain(address: string, chainId: string): Promise<GuardianReport> {
-  const hit = cached(chainId, address);
+export async function scanOnChain(
+  address: string,
+  chainId: string,
+  options?: ScanOptions,
+): Promise<GuardianReport> {
+  let addr = address;
+  let currency = options?.currency;
+  if (chainId === "xrpl") {
+    const parsed = splitXrplTokenId(address);
+    if (parsed) {
+      addr = parsed.issuer;
+      currency = currency ?? parsed.currency;
+    }
+  }
+  const hit = cached(chainId, chainId === "xrpl" ? addr : address, currency);
   if (hit) return hit;
   const chain = getChain(chainId);
   if (!chain) throw new Error(`Unknown chain: ${chainId}`);
   const adapter = adapterFor(chain.family);
-  const report = await adapter.scan(address, chain);
-  remember(report);
+  const report = await adapter.scan(addr, chain, { currency });
+  remember(report, chainId === "xrpl" ? addr : address, currency);
   return report;
 }
 
 export async function runScan(input: {
   address: string;
   chain?: string;
+  currency?: string;
 }): Promise<ScanResponse> {
   const detected = detectFamily(input.address);
   if (!detected.family) {
@@ -61,6 +86,55 @@ export async function runScan(input: {
   }
 
   const address = detected.address;
+  const currency = input.currency ?? detected.currency;
+
+  if (detected.family === "xrpl") {
+    const presence = await xrplAdapter.probe(address, XRPL);
+    if (!presence.exists) {
+      return {
+        kind: "error",
+        address,
+        error: presence.error
+          ? `XRPL node could not confirm that account: ${presence.error}`
+          : "No account at that XRPL classic address.",
+      };
+    }
+
+    const { issuances, error: issuanceError } = await xrplAdapter.listIssuances(address);
+    if (!currency) {
+      if (issuances.length > 1) {
+        return {
+          kind: "xrpl-issuances",
+          family: "xrpl",
+          address,
+          presence: [presence],
+          issuances,
+          message:
+            issuanceError
+              ? `Could not list every issuance (${issuanceError}). Showing what the node returned — pick a currency.`
+              : "This account issues multiple currencies. Pick one to run the token report.",
+        };
+      }
+      const only = issuances[0]?.display ?? issuances[0]?.currency;
+      const report = await scanOnChain(address, "xrpl", { currency: only });
+      return {
+        kind: "report",
+        family: "xrpl",
+        address,
+        presence: [presence],
+        reports: [report],
+      };
+    }
+
+    const report = await scanOnChain(address, "xrpl", { currency });
+    return {
+      kind: "report",
+      family: "xrpl",
+      address,
+      presence: [presence],
+      reports: [report],
+    };
+  }
 
   if (detected.family === "solana") {
     const presence = await solanaAdapter.probe(address, SOLANA);

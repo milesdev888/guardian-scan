@@ -57,7 +57,7 @@ function PresenceBar({
   active?: string;
   address: string;
 }) {
-  if (family === "solana") return null;
+  if (family === "solana" || family === "xrpl") return null;
   return (
     <div className="flex flex-wrap gap-2">
       {presence.map((row) => {

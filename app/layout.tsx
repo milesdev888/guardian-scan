@@ -23,7 +23,7 @@ const mono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Guardian — Multichain Scan",
   description:
-    "Paste-first token scanner for Solana, Ethereum, Base, Arbitrum, and Robinhood Chain. Grades and patterns, not verdicts.",
+    "Paste-first token scanner for Solana, Ethereum, Base, Arbitrum, Robinhood Chain, and XRPL. Grades and patterns, not verdicts.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

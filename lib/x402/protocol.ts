@@ -59,6 +59,30 @@ export const PAID_ROUTES: PaidRoute[] = [
       grade: "C",
     },
   },
+  {
+    path: "/api/scan/xrpl/{issuer}",
+    method: "GET",
+    description:
+      "Guardian XRPL scan: issuer blackhole (mint analogue), Global Freeze / No Freeze, TransferRate, trust-line holders, Domain + xrp-ledger.toml, XLS-30 AMM LP tiers. Query currency for issued tokens (USD, RLUSD, …). No honeypot sim — it does not apply on XRPL mainnet.",
+    input: {
+      issuer: "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
+      currency: "RLUSD",
+    },
+    inputSchema: {
+      properties: {
+        issuer: { type: "string", description: "XRPL classic address (r…)" },
+        currency: {
+          type: "string",
+          description: "Issued currency code (USD, RLUSD, or 160-bit hex). Omit to scan a single-issuance account or the account itself.",
+        },
+      },
+      required: ["issuer"],
+    },
+    outputExample: {
+      schema: "guardian.report.v2",
+      grade: "B",
+    },
+  },
 ];
 
 function bazaarExtension(route: PaidRoute) {
@@ -136,6 +160,9 @@ export function findPaidRoute(pathname: string): PaidRoute | undefined {
   }
   if (/^\/api\/scan\/solana\/[^/]+$/.test(pathname)) {
     return PAID_ROUTES[1];
+  }
+  if (/^\/api\/scan\/xrpl\/[^/]+$/.test(pathname)) {
+    return PAID_ROUTES[2];
   }
   return undefined;
 }
