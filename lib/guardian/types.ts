@@ -1,190 +1,113 @@
-export type Family = "solana" | "evm";
+export type Family = "solana" | "evm" | "xrpl";
 
-export type Grade = "A" | "B" | "C" | "D" | "F" | "U";
+export type Grade = "A" | "B" | "C" | "D" | "F";
 
-export type PatternSeverity = "info" | "watch" | "caution" | "critical";
+export type Severity = "info" | "warn" | "fail";
 
-export type CheckStatus = "pass" | "flag" | "unknown" | "unavailable";
+export type CheckId =
+  | "lp_lock"
+  | "mint_authority"
+  | "freeze_authority"
+  | "holder_concentration"
+  | "honeypot"
+  | "owner_privileges"
+  | "verified_source"
+  | "transfer_tax";
 
-export type DexKind = "uniswap-v2" | "uniswap-v3" | "other";
+export type CheckStatus = "pass" | "warn" | "fail" | "unknown";
 
-export type DexConfig = {
-  id: string;
-  name: string;
-  kind: DexKind;
-};
-
-export type EvmChainConfig = {
-  family: "evm";
-  id: string;
-  name: string;
-  shortName: string;
-  chainId: number;
-  nativeCurrency: string;
-  rpcUrl: string;
-  explorerUrl: string;
-  explorerApiUrl: string;
-  explorerApiKind: "etherscan-v2" | "blockscout";
-  dexScreenerChain: string;
-  goPlusChainId?: string;
-  honeypotChainId?: number;
-  dexes: DexConfig[];
-  announcementTweet: string;
-  rollout: "live" | "config";
-};
-
-export type SolanaChainConfig = {
-  family: "solana";
-  id: "solana";
-  name: string;
-  shortName: string;
-  rpcUrl: string;
-  explorerUrl: string;
-  dexScreenerChain: "solana";
-  dexes: DexConfig[];
-  announcementTweet: string;
-  rollout: "live";
-};
-
-export type ChainConfig = EvmChainConfig | SolanaChainConfig;
-
-export type DetectedFamily = {
-  family: Family;
-  address: string;
-};
-
-export type PresenceMatch = {
-  chainId: string;
-  chainName: string;
-  family: Family;
-  exists: boolean;
-  isContract: boolean;
-  error?: string;
-};
-
-export type Pattern = {
-  id: string;
-  severity: PatternSeverity;
+export interface CheckResult {
+  id: CheckId;
   title: string;
-  detail: string;
-};
-
-export type Check = {
-  id: string;
-  title: string;
-  grade: Grade;
   status: CheckStatus;
-  summary: string;
-  detail: string;
-  evidence?: Record<string, unknown>;
-};
-
-export type TokenIdentity = {
-  address: string;
-  name: string | null;
-  symbol: string | null;
-  decimals: number | null;
-  imageUrl: string | null;
-};
-
-export type Copycat = {
-  address: string;
-  name: string | null;
-  symbol: string;
-  chainId: string;
-  chainName: string;
-  pairAddress: string | null;
-  dex: string | null;
-  liquidityUsd: number | null;
-  createdAt: number | null;
-  flags: Array<"oldest" | "deepest" | "same-chain">;
-  url: string | null;
-};
-
-export type LiquidityPool = {
-  dex: string;
-  pairAddress: string;
-  quote: string;
-  liquidityUsd: number | null;
-  createdAt: number | null;
-  url: string | null;
-};
-
-export type Holder = {
-  address: string;
-  percent: number | null;
-  tag: string | null;
-  locked: boolean | null;
-};
-
-export type SourceStatus = {
-  id: string;
-  ok: boolean;
-  error?: string;
-};
-
-export type GuardianReport = {
-  schema: "guardian.report.v2";
-  scannedAt: string;
-  chain: {
-    id: string;
-    name: string;
-    family: Family;
-    explorerUrl: string;
-  };
-  token: TokenIdentity;
-  grade: Grade;
+  severity: Severity;
   score: number;
-  headline: string;
-  disclaimer: string;
-  patterns: Pattern[];
-  checks: Check[];
-  copycats: Copycat[];
-  pools: LiquidityPool[];
-  holders: Holder[];
-  sources: SourceStatus[];
-};
+  summary: string;
+  detail?: string;
+}
 
-export type ScanRequest = {
+export type LpTier = "PERMANENT" | "BURNED" | "TIMED" | "UNLOCKED" | "UNVERIFIED";
+
+export interface LpLockInfo {
+  tier: LpTier;
+  label: string;
+  lockedPct: number | null;
+  burnedPct: number | null;
+  unlockAt: string | null;
+  remainingHours: number | null;
+  locker: string | null;
+  lockerKind: "protocol" | "escrow" | "burn" | "unknown" | null;
+  lockerUrl: string | null;
+  facts: string[];
+}
+
+export interface TokenIdentity {
+  address: string;
+  chainId: string;
+  family: Family;
+  symbol: string | null;
+  name: string | null;
+  decimals: number | null;
+  image: string | null;
+  /** XRPL issued-currency code (3-letter or 40-hex). */
+  currency?: string | null;
+}
+
+export interface GuardianReport {
+  token: TokenIdentity;
+  scannedAt: string;
+  overall: number;
+  grade: Grade;
+  checks: CheckResult[];
+  notes: string[];
+  /** Present when the adapter reports LP / pool facts (XRPL AMM, future Solana/EVM). */
+  lp?: LpLockInfo | null;
+}
+
+export interface SolanaChainConfig {
+  id: string;
+  family: "solana";
+  label: string;
+  rpc: string;
+  explorer: string;
+  nativeSymbol: string;
+}
+
+export interface EvmChainConfig {
+  id: string;
+  family: "evm";
+  label: string;
+  rpc: string;
+  explorer: string;
+  nativeSymbol: string;
+  chainId: number;
+  wrappedNative: string;
+}
+
+export interface XrplChainConfig {
+  id: string;
+  family: "xrpl";
+  label: string;
+  rpc: string;
+  explorer: string;
+  nativeSymbol: string;
+}
+
+export type ChainConfig = SolanaChainConfig | EvmChainConfig | XrplChainConfig;
+
+export interface ScanRequest {
   address: string;
   chain?: string;
-};
+}
 
 export type ScanResponse =
+  | { ok: true; report: GuardianReport }
+  | { ok: false; error: string; code?: string }
   | {
-      kind: "report";
-      family: Family;
-      address: string;
-      presence: PresenceMatch[];
-      reports: GuardianReport[];
-    }
-  | {
-      kind: "presence";
-      family: Family;
-      address: string;
-      presence: PresenceMatch[];
-      message: string;
-    }
-  | {
-      kind: "error";
+      ok: false;
+      kind: "xrpl-issuances";
       error: string;
-      address?: string;
+      code: "XRPL_ISSUANCES";
+      issuer: string;
+      issuances: { currency: string; display: string }[];
     };
-
-export const CHECK_IDS = [
-  "verified_source",
-  "proxy_upgradeable",
-  "owner_privileges",
-  "transfer_tax",
-  "honeypot_simulation",
-  "lp_lock",
-  "holder_concentration",
-  "contract_age",
-  "deployer_age",
-  "copycats",
-] as const;
-
-export type CheckId = (typeof CHECK_IDS)[number];
-
-export const DISCLAIMER =
-  "Guardian reports grades and on-chain patterns, not a verdict. A high grade is not an endorsement. A low grade is not a determination that the contract is fraudulent.";
