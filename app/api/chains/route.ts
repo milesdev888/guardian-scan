@@ -4,8 +4,8 @@ import { listPublicChains } from "@/lib/chains/config";
 export async function GET() {
   return NextResponse.json({
     adapter: "ChainAdapter",
-    implementations: ["SolanaAdapter", "EvmAdapter"],
-    note: "Adding another EVM chain is a config object: chain id, RPC, explorer, DEX list.",
+    implementations: ["SolanaAdapter", "EvmAdapter", "XRPLAdapter"],
+    note: "Adding another EVM chain is a config object. XRPL is a third adapter — paste an r-address, no dropdown.",
     chains: listPublicChains(),
   });
 }
