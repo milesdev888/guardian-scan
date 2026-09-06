@@ -97,7 +97,11 @@ export function ReportView({ report }: { report: GuardianReport }) {
             <GradeMark grade={report.grade} size="lg" labeled />
             <div>
               <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
-                {report.chain.name} · {report.chain.family}
+                {report.chain.name}
+                {report.chain.family &&
+                report.chain.family.toLowerCase() !== report.chain.name.toLowerCase()
+                  ? ` · ${report.chain.family}`
+                  : ""}
               </p>
               <CardTitle className="font-heading mt-1 text-2xl sm:text-3xl">
                 {report.token.name ?? "Unknown token"}{" "}
@@ -178,8 +182,15 @@ export function ReportView({ report }: { report: GuardianReport }) {
               <ul className="space-y-2">
                 {report.holders.map((holder, index) => (
                   <li key={`${holder.address}-${index}`} className="flex items-center justify-between gap-3 text-sm">
-                    <span className="font-mono text-xs text-muted-foreground">
-                      {holder.tag ?? shorten(holder.address || "unknown", 5)}
+                    <span className="min-w-0 text-xs text-muted-foreground">
+                      {holder.tag ? (
+                        <>
+                          <span className="text-foreground/90">{holder.tag}</span>
+                          <span className="font-mono"> · {shorten(holder.address || "unknown", 4)}</span>
+                        </>
+                      ) : (
+                        <span className="font-mono">{shorten(holder.address || "unknown", 5)}</span>
+                      )}
                     </span>
                     <span>{formatPct(holder.percent)}</span>
                   </li>
@@ -261,7 +272,7 @@ export function ReportView({ report }: { report: GuardianReport }) {
               </table>
             </div>
           ) : (
-            <EmptyNote text="No same-ticker copies in the DexScreener search window." />
+            <EmptyNote text="No same-ticker copies in the search window." />
           )}
         </CardContent>
       </Card>

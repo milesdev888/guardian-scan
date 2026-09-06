@@ -12,11 +12,29 @@ import type {
 import { DISCLAIMER } from "@/lib/guardian/types";
 import { isSolanaAddress } from "@/lib/chains/detect";
 import { findCopycats } from "@/lib/guardian/copycats";
-import { check, compileReportMeta, daysAgo, formatAge, formatPct, formatUsd, pattern } from "@/lib/guardian/grade";
+import {
+  check,
+  compileReportMeta,
+  daysAgo,
+  formatAge,
+  formatPct,
+  formatUsd,
+  pattern,
+} from "@/lib/guardian/grade";
+import { classifyLp, lpCheckFrom, toLpLockInfo } from "@/lib/guardian/lp-tier";
 import { fetchDexToken, filterPairsForChain, identityFromPairs } from "@/lib/sources/dexscreener";
 import { fetchGoPlusSolana } from "@/lib/sources/goplus";
 import { fetchRugCheck } from "@/lib/sources/rugcheck";
+import { parseRugCheckMarkets } from "@/lib/sources/rugcheck-markets";
 import { solanaAccountExists } from "@/lib/sources/rpc";
+import {
+  getAccountOwner,
+  getMultipleAccountOwners,
+  labelForProtocolOwner,
+  METEORA_DAMM_V2_PROGRAM,
+  resolveMintDeployer,
+  SOLANA_BURN_ADDRESSES,
+} from "@/lib/sources/solana-onchain";
 import type { ChainAdapter } from "@/lib/adapters/types";
 
 function asSolana(chain: ChainConfig): SolanaChainConfig {
@@ -24,6 +42,12 @@ function asSolana(chain: ChainConfig): SolanaChainConfig {
     throw new Error("SolanaAdapter received a non-Solana chain config");
   }
   return chain;
+}
+
+/** Protocol vaults, bonding curves, escrows, and burns are not free-float holders. */
+function isExcludedConcentrationTag(tag: string | null | undefined): boolean {
+  if (!tag) return false;
+  return /pool vault|bonding curve|escrow|burn|blackhole|damm|locker/i.test(tag);
 }
 
 export class SolanaAdapter implements ChainAdapter {
@@ -80,22 +104,88 @@ export class SolanaAdapter implements ChainAdapter {
     const name = rug.data?.tokenMeta.name ?? goplus.data?.token_name ?? identity.name;
     const symbol = rug.data?.tokenMeta.symbol ?? goplus.data?.token_symbol ?? identity.symbol;
 
-    const mintAuth = rug.data?.mintAuthority ?? (goplus.data?.mintable?.status === "1" ? "live" : null);
-    const freezeAuth = rug.data?.freezeAuthority ?? (goplus.data?.freezable?.status === "1" ? "live" : null);
+    const mintAuth =
+      rug.data?.mintAuthority ?? (goplus.data?.mintable?.status === "1" ? "live" : null);
+    const freezeAuth =
+      rug.data?.freezeAuthority ?? (goplus.data?.freezable?.status === "1" ? "live" : null);
     const mintLive = Boolean(mintAuth) && mintAuth !== "null";
     const freezeLive = Boolean(freezeAuth) && freezeAuth !== "null";
     const goplusMint = goplus.data?.mintable?.status === "1";
     const goplusFreeze = goplus.data?.freezable?.status === "1";
 
-    const holders: Holder[] = (rug.data?.topHolders.length ? rug.data.topHolders : goplus.data?.holders ?? [])
-      .slice(0, 10)
-      .map((row) => ({
-        address: ("address" in row ? row.address : undefined) ?? "",
-        percent: "pct" in row ? (row.pct ?? null) : Number((row as { percent?: string }).percent ?? 0) * 100,
-        tag: "insider" in row && row.insider ? "insider" : ((row as { tag?: string }).tag ?? null),
-        locked: "is_locked" in row ? (row as { is_locked?: number }).is_locked === 1 : null,
-      }));
-    const top10 = holders.reduce((sum, row) => sum + (row.percent ?? 0), 0);
+    const marketParse = parseRugCheckMarkets(rug.data?.markets ?? []);
+    const accountLabels = new Map(marketParse.accountLabels);
+
+    // Live-confirm deepest pool owner (Meteora DAMM v2 permanent positions).
+    const deepestParsed = [...marketParse.parsed].sort(
+      (a, b) => (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0),
+    )[0];
+    if (deepestParsed?.pubkey) {
+      const poolOwner = await getAccountOwner(sol.rpcUrl, deepestParsed.pubkey);
+      note("solana-pool-owner", !poolOwner.error, poolOwner.error);
+      if (poolOwner.owner === METEORA_DAMM_V2_PROGRAM) {
+        accountLabels.set(deepestParsed.pubkey, "Meteora DAMM v2 pool");
+        const idx = marketParse.parsed.findIndex((row) => row.pubkey === deepestParsed.pubkey);
+        if (idx >= 0) {
+          marketParse.parsed[idx].marketType = "meteora_damm_v2";
+          const market = marketParse.markets[idx];
+          if (market) {
+            market.marketType = "meteora_damm_v2";
+            market.lockerName = "Meteora DAMM v2";
+            // Permanent positions are not classic burns even when lpMint looks burned.
+            market.burnedPct = 0;
+          }
+        }
+      }
+    }
+
+    const rawHolders = (
+      rug.data?.topHolders.length ? rug.data.topHolders : (goplus.data?.holders ?? [])
+    ).slice(0, 12);
+
+    const holderAddresses = rawHolders
+      .map((row) => ("address" in row ? row.address : undefined) ?? "")
+      .filter(Boolean);
+    const ownerLookup = await getMultipleAccountOwners(sol.rpcUrl, holderAddresses);
+    note("solana-holder-owners", !ownerLookup.error, ownerLookup.error);
+
+    for (const [addr, owner] of ownerLookup.owners) {
+      const protocolLabel = labelForProtocolOwner(owner);
+      if (protocolLabel && !accountLabels.has(addr)) {
+        accountLabels.set(addr, protocolLabel);
+      }
+    }
+    for (const addr of holderAddresses) {
+      if (SOLANA_BURN_ADDRESSES.has(addr) && !accountLabels.has(addr)) {
+        accountLabels.set(addr, "Burn address");
+      }
+    }
+
+    const holders: Holder[] = rawHolders.slice(0, 10).map((row) => {
+      const addr = ("address" in row ? row.address : undefined) ?? "";
+      const percent =
+        "pct" in row ? (row.pct ?? null) : Number((row as { percent?: string }).percent ?? 0) * 100;
+      const priorTag =
+        "insider" in row && row.insider
+          ? "insider"
+          : ((row as { tag?: string }).tag ?? null);
+      const protocolTag = accountLabels.get(addr) ?? null;
+      const tag = protocolTag ?? priorTag;
+      return {
+        address: addr,
+        percent,
+        tag,
+        locked:
+          Boolean(protocolTag) ||
+          ("is_locked" in row ? (row as { is_locked?: number }).is_locked === 1 : null),
+      };
+    });
+
+    const freeFloatHolders = holders.filter((row) => !isExcludedConcentrationTag(row.tag));
+    const top10 = freeFloatHolders.reduce((sum, row) => sum + (row.percent ?? 0), 0);
+    const excludedPct = holders
+      .filter((row) => isExcludedConcentrationTag(row.tag))
+      .reduce((sum, row) => sum + (row.percent ?? 0), 0);
 
     const pools: LiquidityPool[] = (pairs.length ? pairs : dex.pairs).slice(0, 6).map((pair) => ({
       dex: pair.dexId,
@@ -112,7 +202,7 @@ export class SolanaAdapter implements ChainAdapter {
             ticker: symbol,
             chainId: sol.id,
             chainName: sol.name,
-            dexScreenerChain: "solana",
+            dexScreenerChain: sol.dexScreenerChain,
             excludeAddress: address,
           })
         ).copycats
@@ -130,7 +220,8 @@ export class SolanaAdapter implements ChainAdapter {
             status: "flag",
             grade: "C",
             summary: "Token metadata is still mutable.",
-            detail: "Solana tokens do not use Etherscan-style verification. Mutable metadata means name, symbol, and URI can still change.",
+            detail:
+              "Solana tokens do not use Etherscan-style verification. Mutable metadata means name, symbol, and URI can still change.",
           })
         : check({
             id: "verified_source",
@@ -141,7 +232,8 @@ export class SolanaAdapter implements ChainAdapter {
               mutable === false
                 ? "Metadata update authority is frozen."
                 : "Metadata mutability was not returned.",
-            detail: "Guardian maps Solana metadata authority onto the same verified-source slot used for EVM explorer verification.",
+            detail:
+              "Guardian maps Solana metadata authority onto the same verified-source slot used for EVM explorer verification.",
           }),
     );
 
@@ -177,8 +269,11 @@ export class SolanaAdapter implements ChainAdapter {
             title: "Owner privileges",
             status: "flag",
             grade: mintLive || goplusMint ? "F" : "D",
-            summary: `${mintLive || goplusMint ? "Mint authority live" : "Mint burned"}${freezeLive || goplusFreeze ? "; freeze authority live" : ""}.`,
-            detail: "Mint and freeze map to the EVM owner-privilege slot (mint / pause). A live mint can inflate supply; freeze can halt wallets.",
+            summary: `${mintLive || goplusMint ? "Mint authority live" : "Mint burned"}${
+              freezeLive || goplusFreeze ? "; freeze authority live" : ""
+            }.`,
+            detail:
+              "Mint and freeze map to the EVM owner-privilege slot (mint / pause). A live mint can inflate supply; freeze can halt wallets.",
             evidence: { mintAuth, freezeAuth },
           })
         : check({
@@ -202,7 +297,8 @@ export class SolanaAdapter implements ChainAdapter {
             status: "flag",
             grade: feeRate >= 10 ? "D" : "C",
             summary: `Token-2022 transfer fee ≈ ${formatPct(feeRate)}.`,
-            detail: "Transfer-fee extension on Token-2022. This is the Solana equivalent of an EVM transfer tax.",
+            detail:
+              "Transfer-fee extension on Token-2022. This is the Solana equivalent of an EVM transfer tax.",
           })
         : check({
             id: "transfer_tax",
@@ -213,7 +309,8 @@ export class SolanaAdapter implements ChainAdapter {
               feeRate === 0
                 ? "No Token-2022 transfer fee reported."
                 : "No transfer-fee extension in the GoPlus payload.",
-            detail: "Solana does not use EVM buy/sell tax fields; Guardian maps Token-2022 transfer fees here.",
+            detail:
+              "Solana does not use EVM buy/sell tax fields; Guardian maps Token-2022 transfer fees here.",
           }),
     );
 
@@ -241,37 +338,16 @@ export class SolanaAdapter implements ChainAdapter {
           }),
     );
 
-    const locked = rug.data?.lpLockedPct;
-    checks.push(
-      locked === null || locked === undefined
-        ? check({
-            id: "lp_lock",
-            title: "LP lock / burn",
-            status: pools.length ? "flag" : "unknown",
-            grade: pools.length ? "C" : "U",
-            summary: pools.length
-              ? `Pools found on ${[...new Set(pools.map((p) => p.dex))].join(", ")}; lock percent missing.`
-              : "No LP lock figure and no DexScreener pools.",
-            detail: `Main DEXes: ${sol.dexes.map((d) => d.name).join(", ")}.`,
-          })
-        : locked >= 80
-          ? check({
-              id: "lp_lock",
-              title: "LP lock / burn",
-              status: "pass",
-              grade: "A",
-              summary: `${formatPct(locked)} of LP is locked or burned.`,
-              detail: `Liquidity across listed pools: ${formatUsd(pools.reduce((s, p) => s + (p.liquidityUsd ?? 0), 0))}.`,
-            })
-          : check({
-              id: "lp_lock",
-              title: "LP lock / burn",
-              status: "flag",
-              grade: locked < 10 ? "F" : "D",
-              summary: `${formatPct(locked)} of LP is locked.`,
-              detail: "Unlocked Raydium / Meteora / Pump LP is the standard Solana rug vector.",
-            }),
-    );
+    const createdAt = pools[0]?.createdAt ?? rug.data?.detectedAt ?? null;
+    const ageDays = daysAgo(createdAt);
+
+    const lpAssessment = classifyLp({
+      family: "solana",
+      tokenAgeDays: ageDays,
+      markets: marketParse.markets,
+      lockers: [],
+    });
+    checks.push(lpCheckFrom(lpAssessment));
 
     checks.push(
       holders.length === 0
@@ -283,27 +359,36 @@ export class SolanaAdapter implements ChainAdapter {
             summary: "Top-10 holders were not returned.",
             detail: "RugCheck and GoPlus both missed holder tables.",
           })
-        : top10 >= 70
+        : freeFloatHolders.length === 0
           ? check({
               id: "holder_concentration",
               title: "Holder concentration",
-              status: "flag",
-              grade: top10 >= 90 ? "F" : "D",
-              summary: `Top 10 wallets hold ${formatPct(top10)} of supply.`,
-              detail: "Includes bonding-curve and LP accounts when RugCheck lists them.",
+              status: "unknown",
+              grade: "U",
+              summary: "All listed accounts are pool vaults, escrows, or burns.",
+              detail: `Excluded ${formatPct(excludedPct)} in protocol / burn accounts from free-float math.`,
             })
-          : check({
-              id: "holder_concentration",
-              title: "Holder concentration",
-              status: "pass",
-              grade: top10 >= 50 ? "B" : "A",
-              summary: `Top 10 wallets hold ${formatPct(top10)} of supply.`,
-              detail: `${holders.length} accounts listed.`,
-            }),
+          : top10 >= 70
+            ? check({
+                id: "holder_concentration",
+                title: "Holder concentration",
+                status: "flag",
+                grade: top10 >= 90 ? "F" : "D",
+                summary: `Top free-float wallets hold ${formatPct(top10)} of supply.`,
+                detail: `Concentration uses human-controlled unlocked wallets only. Excluded ${formatPct(
+                  excludedPct,
+                )} in pool vaults, bonding curves, locker escrows, and burns.`,
+              })
+            : check({
+                id: "holder_concentration",
+                title: "Holder concentration",
+                status: "pass",
+                grade: top10 >= 50 ? "B" : "A",
+                summary: `Top free-float wallets hold ${formatPct(top10)} of supply.`,
+                detail: `${freeFloatHolders.length} free-float accounts scored; protocol vaults and burns labeled but excluded.`,
+              }),
     );
 
-    const createdAt = pools[0]?.createdAt ?? rug.data?.detectedAt ?? null;
-    const ageDays = daysAgo(createdAt);
     checks.push(
       ageDays === null
         ? check({
@@ -329,27 +414,40 @@ export class SolanaAdapter implements ChainAdapter {
               status: "pass",
               grade: ageDays < 30 ? "B" : "A",
               summary: `First pool is ${formatAge(createdAt)} old.`,
-              detail: rug.data?.deployer ? `Creator ${rug.data.deployer}.` : "Creator not listed.",
+              detail: "Age from first listed pool / detection timestamp.",
             }),
     );
 
+    let deployer = rug.data?.deployer ?? goplus.data?.creator_address ?? null;
+    if (!deployer) {
+      const resolved = await resolveMintDeployer(sol.rpcUrl, address);
+      note("solana-deployer", Boolean(resolved.deployer), resolved.error);
+      deployer = resolved.deployer;
+    } else {
+      note("solana-deployer", true);
+    }
+
     checks.push(
-      rug.data?.deployer
+      deployer
         ? check({
             id: "deployer_age",
             title: "Deployer wallet age",
             status: "unknown",
             grade: "U",
-            summary: `Creator ${rug.data.deployer} — first-signature age not fetched in v2.`,
-            detail: "Solana deployer-age uses creator identity today. Full first-signature aging ships with Watch.",
+            summary: `Creator ${deployer} — first-signature age not fetched in v2.`,
+            detail:
+              rug.data?.deployer || goplus.data?.creator_address
+                ? "Creator from RugCheck / GoPlus. Full first-signature aging ships with Watch."
+                : "Creator resolved from the mint's earliest on-chain initializeMint / fee payer (RugCheck omitted creator).",
+            evidence: { deployer },
           })
         : check({
             id: "deployer_age",
             title: "Deployer wallet age",
             status: "unknown",
             grade: "U",
-            summary: "Creator wallet was not returned.",
-            detail: "RugCheck did not include a creator field.",
+            summary: "Creator wallet could not be resolved on-chain.",
+            detail: "RugCheck omitted creator and the mint signature walk did not return a fee payer.",
           }),
     );
 
@@ -371,8 +469,8 @@ export class SolanaAdapter implements ChainAdapter {
               title: "Same-ticker copies",
               status: "pass",
               grade: "A",
-              summary: `No other ${symbol} pools on Solana in the DexScreener search window.`,
-              detail: "This is the same oldest/deepest ticker search used on EVM chains.",
+              summary: `No other ${symbol} pools on Solana in the search window.`,
+              detail: "DexScreener + Jupiter + GeckoTerminal same-ticker search.",
             })
           : check({
               id: "copycats",
@@ -387,6 +485,7 @@ export class SolanaAdapter implements ChainAdapter {
                 deepestCopy
                   ? `Deepest: ${deepestCopy.address} (${formatUsd(deepestCopy.liquidityUsd)}).`
                   : null,
+                "Search depth: DexScreener + Jupiter token search + GeckoTerminal pools.",
               ]
                 .filter(Boolean)
                 .join(" "),
@@ -432,6 +531,7 @@ export class SolanaAdapter implements ChainAdapter {
       pools,
       holders,
       sources,
+      lp: toLpLockInfo(lpAssessment),
     };
   }
 }
