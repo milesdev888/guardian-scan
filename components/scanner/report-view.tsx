@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { GradeMark } from "@/components/scanner/grade-mark";
+import { BadgeSealCorner } from "@/components/scanner/badge-seal";
 import { buttonVariants } from "@/components/ui/button";
 import { formatAge, formatPct, formatUsd, shorten } from "@/lib/guardian/grade";
 import type {
@@ -159,7 +160,8 @@ export function ReportView({ report }: { report: GuardianReport }) {
   const lpTier = report.lp?.tier ?? null;
 
   return (
-    <div className="space-y-6">
+    <div className="relative space-y-6 pb-16">
+      <BadgeSealCorner mint={report.token.address} />
       <Card className="border-border/80 bg-card/80">
         <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex gap-4">
