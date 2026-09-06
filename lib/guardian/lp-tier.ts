@@ -316,22 +316,8 @@ function classifySolana(input: LpObservation): LpAssessment {
     });
   }
 
-  if (burnedPct >= 80 || (lpMintBurned && burnedPct >= 50 && !isPermanentPoolType(poolType))) {
-    return finalize({
-      tier: "BURNED",
-      lockedPct,
-      burnedPct,
-      freePct: clampPct(100 - secured),
-      unlockAt: null,
-      lockerName: lockerName,
-      poolType,
-      summary: `🔥 BURNED — ${burnedPct.toFixed(0)}% of LP is at a burn address.`,
-      detail: "Burned LP cannot be withdrawn. This is a lifetime lock tier.",
-      grade: "A",
-      status: "pass",
-    });
-  }
-
+  // Protocol-level permanent pools (e.g. Meteora DAMM v2) before classic burn —
+  // DAMM often surfaces a burn-like lpMint for non-transferable positions.
   if (isPermanentPoolType(poolType) && (lockedPct ?? 0) >= 80) {
     return finalize({
       tier: "PERMANENT",
@@ -344,6 +330,22 @@ function classifySolana(input: LpObservation): LpAssessment {
       summary: `🔒 PERMANENT — ${Math.round(lockedPct ?? 0)}% locked in a protocol-level position (${poolType}).`,
       detail:
         "Meteora DAMM v2 (and equivalent permanent positions) do not mint transferable LP tokens that a team wallet can pull. This is a lifetime lock tier.",
+      grade: "A",
+      status: "pass",
+    });
+  }
+
+  if (burnedPct >= 80 || (lpMintBurned && burnedPct >= 50)) {
+    return finalize({
+      tier: "BURNED",
+      lockedPct,
+      burnedPct,
+      freePct: clampPct(100 - secured),
+      unlockAt: null,
+      lockerName: lockerName,
+      poolType,
+      summary: `🔥 BURNED — ${burnedPct.toFixed(0)}% of LP is at a burn address.`,
+      detail: "Burned LP cannot be withdrawn. This is a lifetime lock tier.",
       grade: "A",
       status: "pass",
     });
