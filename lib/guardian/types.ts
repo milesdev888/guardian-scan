@@ -1,6 +1,7 @@
 export type Family = "solana" | "evm" | "xrpl";
 
-export type Grade = "A" | "B" | "C" | "D" | "F" | "U";
+/** Letter grades. AA is platinum — never assigned from score alone. */
+export type Grade = "AA" | "A" | "B" | "C" | "D" | "F" | "U";
 
 export type PatternSeverity = "info" | "watch" | "caution" | "critical";
 
