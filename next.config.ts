@@ -1,7 +1,16 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  async rewrites() {
+    return [
+      // /api/card/<mint>.png → /api/card/<mint>
+      {
+        source: "/api/card/:mint.png",
+        destination: "/api/card/:mint",
+      },
+    ];
+  },
+  serverExternalPackages: ["@napi-rs/canvas"],
 };
 
 export default nextConfig;
