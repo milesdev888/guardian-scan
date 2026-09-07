@@ -317,4 +317,283 @@ function classifySolana(input: LpObservation): LpAssessment {
 
   if (!top && !lockers.length) {
     return unverified({
-      summary: "No LP 
+      summary: "No LP lock figure and no recognized pool.",
+      detail: "Guardian needs a pool or locker map before LP can be graded as burned, permanent, or timed.",
+      grade: "U",
+      status: "unknown",
+    });
+  }
+
+  // Protocol-level permanent pools (e.g. Meteora DAMM v2) before classic burn —
+  // DAMM often surfaces a burn-like lpMint for non-transferable positions.
+  if (isPermanentPoolType(poolType) && (lockedPct ?? 0) >= 80) {
+    return finalize({
+      tier: "PERMANENT",
+      lockedPct,
+      burnedPct,
+      freePct: clampPct(100 - (lockedPct ?? 0) - burnedPct),
+      unlockAt: null,
+      lockerName: lockerName ?? "Meteora DAMM v2",
+      poolType,
+      summary: `🔒 PERMANENT — ${Math.round(lockedPct ?? 0)}% locked in a protocol-level position (${poolType}).`,
+      detail:
+        "Meteora DAMM v2 (and equivalent permanent positions) do not mint transferable LP tokens that a team wallet can pull. This is a lifetime lock tier.",
+      grade: "A",
+      status: "pass",
+    });
+  }
+
+  if (burnedPct >= 80 || (lpMintBurned && burnedPct >= 50)) {
+    return finalize({
+      tier: "BURNED",
+      lockedPct,
+      burnedPct,
+      freePct: clampPct(100 - lockedSum),
+      unlockAt: null,
+      lockerName: lockerName,
+      poolType,
+      summary: `🔥 BURNED — ${formatPct(burnedPct)} of LP is at a burn address.`,
+      detail: "Burned LP cannot be withdrawn. This is a lifetime lock tier.",
+      grade: "A",
+      status: "pass",
+    });
+  }
+
+  if (lpMintBurned && (lockedPct ?? 0) >= 95 && !earliestUnlock) {
+    return finalize({
+      tier: "PERMANENT",
+      lockedPct,
+      burnedPct,
+      freePct: clampPct(100 - (lockedPct ?? 0) - burnedPct),
+      unlockAt: null,
+      lockerName: lockerName ?? poolType,
+      poolType,
+      summary: `🔒 PERMANENT — LP mint is burned and ${Math.round(lockedPct ?? 0)}% is locked with no unlock date.`,
+      detail: "No transferable LP mint remains. Treated as a protocol-level permanent lock.",
+      grade: "A",
+      status: "pass",
+    });
+  }
+
+  if (timedLocker || earliestUnlock || looksTimedLocker(lockerName)) {
+    const remaining = daysUntil(earliestUnlock);
+    const expired = remaining !== null && remaining <= 0;
+    const short = expired || (remaining !== null && remaining < 90);
+    return finalize({
+      tier: "TIMED",
+      lockedPct,
+      burnedPct,
+      freePct: clampPct(100 - (lockedPct ?? 0) - burnedPct),
+      unlockAt: earliestUnlock,
+      lockerName,
+      poolType,
+      summary: expired
+        ? `⏳ TIMED — lock expired${earliestUnlock ? ` ${earliestUnlock.slice(0, 10)}` : ""}.`
+        : `⏳ TIMED — ${Math.round(lockedPct ?? 0)}% locked via ${lockerName ?? "a known locker"}${
+            earliestUnlock ? `; unlock ${earliestUnlock.slice(0, 10)}` : ""
+          }.`,
+      detail: short
+        ? "A lock that expires in under 90 days is not a lasting lock. Flagged, not a pass."
+        : "Known timed locker (Streamflow, Jupiter Lock, UNCX, Team Finance, and similar). Badge eligibility expires at unlock.",
+      grade: expired ? "F" : short ? "D" : "B",
+      status: expired || short ? "flag" : "pass",
+      shortUnlockWarning: short,
+    });
+  }
+
+  if ((lockedPct ?? 0) >= 80) {
+    return unverified({
+      lockedPct,
+      burnedPct,
+      freePct: clampPct(100 - (lockedPct ?? 0) - burnedPct),
+      lockerName,
+      poolType,
+      summary: `⚠️ UNVERIFIED — ${Math.round(lockedPct ?? 0)}% reported locked in an unknown contract or wallet.`,
+      detail:
+        "Unknown lockers are a warning, never a pass. Guardian will not treat an unlabeled wallet as a lock, even at 100%.",
+      grade: "C",
+      status: "flag",
+    });
+  }
+
+  const unlocked = lockedPct === null || lockedPct < 10;
+  return unverified({
+    lockedPct,
+    burnedPct,
+    freePct: clampPct(100 - (lockedPct ?? 0) - burnedPct),
+    lockerName,
+    poolType,
+    summary:
+      lockedPct == null
+        ? "⚠️ UNVERIFIED — lock percent missing for listed pools."
+        : `⚠️ UNVERIFIED — ${Math.round(lockedPct)}% locked; remainder can be pulled.`,
+    detail: established
+      ? "Unlocked AMM LP on an established token is a pattern, not the same rug vector as a day-old launch."
+      : "Unlocked LP on a new mint is the standard Solana rug vector.",
+    grade: unlocked && !established ? "F" : "C",
+    status: "flag",
+  });
+}
+
+function classifyEvm(input: LpObservation): LpAssessment {
+  const holders = input.evmLpHolders ?? [];
+  const established = (input.tokenAgeDays ?? 0) >= 90;
+  if (!holders.length && !(input.markets ?? []).length) {
+    return unverified({
+      summary: "No LP holders or pools returned.",
+      detail: "Without a locker map, Guardian cannot call this burned, permanent, or timed.",
+      grade: "U",
+      status: "unknown",
+    });
+  }
+
+  let burnedPct = 0;
+  let timedPct = 0;
+  let unknownLockedPct = 0;
+  let freePct = 0;
+  let lockerName: string | null = null;
+  let unlockAt: string | null = null;
+
+  for (const row of holders) {
+    const pct = row.percent ?? 0;
+    const tag = row.tag ?? "";
+    const timed = looksTimedLocker(tag);
+    const burned = isEvmBurn(row.address) || /burn/i.test(tag);
+    if (burned) {
+      burnedPct += pct;
+      continue;
+    }
+    if (timed || (row.locked && looksTimedLocker(tag))) {
+      timedPct += pct;
+      if (!lockerName) lockerName = tag || "known locker";
+      if (row.unlockAt && (!unlockAt || Date.parse(row.unlockAt) < Date.parse(unlockAt))) {
+        unlockAt = row.unlockAt;
+      }
+      continue;
+    }
+    if (row.locked) {
+      unknownLockedPct += pct;
+      if (!lockerName) lockerName = tag || row.address || "unknown locker";
+      continue;
+    }
+    freePct += pct;
+  }
+
+  const poolType = pickDeepestMarket(input.markets ?? [])?.marketType ?? null;
+
+  if (burnedPct >= 80) {
+    return finalize({
+      tier: "BURNED",
+      lockedPct: burnedPct,
+      burnedPct,
+      freePct,
+      unlockAt: null,
+      lockerName,
+      poolType,
+      summary: `🔥 BURNED — ${formatPct(burnedPct)} of tracked LP is at a burn address.`,
+      detail: "Burned LP cannot be withdrawn. This is a lifetime lock tier.",
+      grade: "A",
+      status: "pass",
+    });
+  }
+
+  if (timedPct >= 80) {
+    const remaining = daysUntil(unlockAt);
+    const expired = remaining !== null && remaining <= 0;
+    const short = expired || remaining === null || remaining < 90;
+    return finalize({
+      tier: "TIMED",
+      lockedPct: timedPct,
+      burnedPct,
+      freePct,
+      unlockAt,
+      lockerName,
+      poolType,
+      summary: `⏳ TIMED — ${formatPct(timedPct)} in ${lockerName ?? "a known locker"}${
+        unlockAt ? `; unlock ${unlockAt.slice(0, 10)}` : ""
+      }.`,
+      detail: short
+        ? remaining === null
+          ? "Known timed locker, but no unlock date was returned. Treated as a warning until the date is public."
+          : "A lock that expires in under 90 days is not a lasting lock. Flagged, not a pass."
+        : "Known timed locker. Badge eligibility expires at unlock.",
+      grade: expired ? "F" : short ? "D" : "B",
+      status: expired || short ? "flag" : "pass",
+      shortUnlockWarning: short,
+    });
+  }
+
+  if (unknownLockedPct >= 80 || burnedPct + timedPct + unknownLockedPct >= 80) {
+    return unverified({
+      lockedPct: unknownLockedPct + timedPct + burnedPct,
+      burnedPct,
+      freePct,
+      lockerName,
+      poolType,
+      summary: `⚠️ UNVERIFIED — LP sits in an unknown contract or wallet (${Math.round(
+        unknownLockedPct + timedPct + burnedPct,
+      )}% tagged locked).`,
+      detail: "Unknown lockers are a warning, never a pass — including GoPlus is_locked flags on unlabeled addresses.",
+      grade: "C",
+      status: "flag",
+    });
+  }
+
+  const lockedPct = burnedPct + timedPct + unknownLockedPct;
+  return unverified({
+    lockedPct,
+    burnedPct,
+    freePct: clampPct(100 - lockedPct),
+    lockerName,
+    poolType,
+    summary: `⚠️ UNVERIFIED — ${Math.round(lockedPct)}% of tracked LP is locked or burned.`,
+    detail: established
+      ? "Unlocked AMM LP on an established token is a pattern, not the same rug vector as a day-old launch."
+      : "Unlocked LP on a new DEX launch is the classic rug vector.",
+    grade: lockedPct < 10 && !established ? "F" : "C",
+    status: "flag",
+  });
+}
+
+export function lpCheckFrom(assessment: LpAssessment): Check {
+  return check({
+    id: "lp_lock",
+    title: "LP lock / burn",
+    status: assessment.status,
+    grade: assessment.grade,
+    summary: assessment.summary,
+    detail: assessment.detail,
+    evidence: {
+      tier: assessment.tier,
+      lockedPct: assessment.lockedPct,
+      burnedPct: assessment.burnedPct,
+      freePct: assessment.freePct,
+      unlockAt: assessment.unlockAt,
+      lockerName: assessment.lockerName,
+      poolType: assessment.poolType,
+      lifetimeEligible: assessment.lifetimeEligible,
+    },
+  });
+}
+
+export function toLpLockInfo(assessment: LpAssessment): LpLockInfo {
+  return {
+    tier: assessment.tier,
+    lockedPct: assessment.lockedPct,
+    burnedPct: assessment.burnedPct,
+    freePct: assessment.freePct,
+    unlockAt: assessment.unlockAt,
+    lockerName: assessment.lockerName,
+    poolType: assessment.poolType,
+    lifetimeEligible: assessment.lifetimeEligible,
+    badgeEligible: assessment.badgeEligible,
+  };
+}
+
+export function unixToIso(value: number | string | null | undefined): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const ms = n < 10_000_000_000 ? n * 1000 : n;
+  return new Date(ms).toISOString();
+}
