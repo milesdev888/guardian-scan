@@ -1,9 +1,15 @@
 /**
  * Share-card LP status line wording (SCAN_SHARE_CARD_SPEC).
- * Use "locked", never "secured". Never say "unlocked" on Established path.
+ * Use "locked", never "secured". Never say "unlocked" on Established /
+ * Distributed-liquidity path.
  */
 
-import { asFiniteNumber, safeToFixed } from "@/lib/guardian/grade";
+import {
+  analyzePoolsForAa,
+  asFiniteNumber,
+  isDistributedLiquidity,
+  safeToFixed,
+} from "@/lib/guardian/grade";
 import type { GuardianReport } from "@/lib/guardian/types";
 import type { BadgeCardStatus } from "@/lib/card/chips";
 
@@ -33,12 +39,6 @@ function formatUnlock(unlockAt: string | null | undefined): string {
   }
 }
 
-function independentPoolCount(report: GuardianReport): number | null {
-  const n = report.pools?.length ?? 0;
-  if (n <= 0) return null;
-  return n;
-}
-
 /**
  * Build the LP status line from stored report + badge path.
  */
@@ -48,10 +48,15 @@ export function buildLpLine(
 ): LpLine {
   const tier = report.lp?.tier ?? null;
   const established = isEstablishedPath(badge);
+  const distributed =
+    established ||
+    isDistributedLiquidity(report.pools) ||
+    report.checks?.find((c) => c.id === "lp_lock")?.evidence?.distributedLiquidity ===
+      true;
 
-  if (established) {
-    const n = independentPoolCount(report);
-    const count = n === null ? "—" : String(n);
+  if (distributed) {
+    const stats = analyzePoolsForAa(report.pools);
+    const count = stats.poolCount > 0 ? String(stats.poolCount) : "—";
     return {
       text: `LIQUIDITY DISTRIBUTED · ${count} independent pools`,
       tone: "gold",
