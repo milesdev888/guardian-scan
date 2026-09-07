@@ -217,7 +217,15 @@ export async function renderShareCardPng(model: ShareCardModel): Promise<Buffer>
   ctx.fillText(model.chainName.toUpperCase(), textLeft, 206);
 
   // Grade line
-  ctx.fillStyle = model.gradeColor;
+  if (model.grade === "AA") {
+    const g = ctx.createLinearGradient(88, 280, 720, 330);
+    g.addColorStop(0, "#F7F8FA");
+    g.addColorStop(0.45, "#E5E4E2");
+    g.addColorStop(1, "#B8BEC8");
+    ctx.fillStyle = g;
+  } else {
+    ctx.fillStyle = model.gradeColor;
+  }
   ctx.font = `700 44px ${FONT_UI}`;
   ctx.fillText(model.gradeLine, 88, 320);
 
