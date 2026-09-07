@@ -198,3 +198,27 @@ function finalize(
     badgeEligible,
   };
 }
+
+function unverified(
+  extra: Partial<LpAssessment> & Pick<LpAssessment, "summary" | "detail">,
+): LpAssessment {
+  return finalize({
+    tier: "UNVERIFIED",
+    lockedPct: extra.lockedPct ?? null,
+    burnedPct: extra.burnedPct ?? 0,
+    freePct: extra.freePct ?? null,
+    unlockAt: extra.unlockAt ?? null,
+    lockerName: extra.lockerName ?? null,
+    poolType: extra.poolType ?? null,
+    summary: extra.summary,
+    detail: extra.detail,
+    grade: extra.grade ?? "C",
+    status: extra.status ?? "flag",
+  });
+}
+
+export function classifyLp(input: LpObservation): LpAssessment {
+  if (input.family === "solana") return classifySolana(input);
+  if (input.family === "xrpl") return classifyXrpl(input);
+  return classifyEvm(input);
+}
