@@ -222,3 +222,99 @@ export function classifyLp(input: LpObservation): LpAssessment {
   if (input.family === "xrpl") return classifyXrpl(input);
   return classifyEvm(input);
 }
+
+function classifyXrpl(input: LpObservation): LpAssessment {
+  const x = input.xrpl;
+  if (!x?.poolExists) {
+    return unverified({
+      poolType: null,
+      summary: "⚠️ UNVERIFIED — no XLS-30 AMM pool found for this currency + issuer.",
+      detail:
+        "XRPL has no Meteora DAMM analogue. Without an AMM pool, Guardian cannot treat LP as burned, permanent, or timed.",
+      grade: "U",
+      status: "unknown",
+    });
+  }
+
+  const burnedPct = clampPct(x.lpBurnedPct ?? 0) ?? 0;
+  const lockedPct = clampPct(x.lpLockedPct ?? null);
+  const amm = x.ammAccount ?? "XLS-30 AMM";
+
+  if (burnedPct >= 80) {
+    return finalize({
+      tier: "BURNED",
+      lockedPct: burnedPct,
+      burnedPct,
+      freePct: clampPct(100 - burnedPct),
+      unlockAt: null,
+      lockerName: amm,
+      poolType: "xls30_amm",
+      summary: `🔥 BURNED — ${formatPct(burnedPct)} of AMM LP tokens sit at a blackhole address.`,
+      detail:
+        "LP tokens at a known XRPL blackhole cannot be withdrawn. This is the lifetime-burn equivalent. PERMANENT does not apply on XRPL — there is no protocol-level DAMM lock.",
+      grade: "A",
+      status: "pass",
+    });
+  }
+
+  if (x.escrowUnlockAt) {
+    const remaining = daysUntil(x.escrowUnlockAt);
+    const expired = remaining !== null && remaining <= 0;
+    const short = expired || remaining === null || remaining < 90;
+    return finalize({
+      tier: "TIMED",
+      lockedPct: lockedPct ?? burnedPct,
+      burnedPct,
+      freePct: clampPct(100 - (lockedPct ?? 0) - burnedPct),
+      unlockAt: x.escrowUnlockAt,
+      lockerName: amm,
+      poolType: "xls30_amm",
+      summary: expired
+        ? `⏳ TIMED — AMM LP escrow finished ${x.escrowUnlockAt.slice(0, 10)}.`
+        : `⏳ TIMED — AMM LP in escrow until ${x.escrowUnlockAt.slice(0, 10)}.`,
+      detail: short
+        ? "An escrow that ends in under 90 days is not a lasting lock. Flagged, not a pass. XRPL has no PERMANENT AMM tier."
+        : "LP tokens in an Escrow with FinishAfter. Badge eligibility expires at FinishAfter.",
+      grade: expired ? "F" : short ? "D" : "B",
+      status: expired || short ? "flag" : "pass",
+      shortUnlockWarning: short,
+    });
+  }
+
+  return unverified({
+    lockedPct,
+    burnedPct,
+    freePct: clampPct(100 - burnedPct - (lockedPct ?? 0)),
+    lockerName: amm,
+    poolType: "xls30_amm",
+    summary: `⚠️ UNVERIFIED — XLS-30 AMM exists (${amm}); LP tokens remain transferable.`,
+    detail:
+      x.facts ??
+      "XRPL AMM LP tokens can be withdrawn unless burned or escrowed. Guardian will not invent a PERMANENT pass — there is no DAMM v2 analogue on XRPL.",
+    grade: "C",
+    status: "flag",
+  });
+}
+
+function classifySolana(input: LpObservation): LpAssessment {
+  const markets = input.markets ?? [];
+  const top = pickDeepestMarket(markets);
+  const lockers = input.lockers ?? [];
+  const timedLocker = lockers.find((row) => looksTimedLocker(row.name ?? row.type, row.programId));
+  const earliestUnlock =
+    [...lockers, ...markets]
+      .map((row) => row.unlockAt)
+      .filter((value): value is string => Boolean(value))
+      .sort((a, b) => Date.parse(a) - Date.parse(b))[0] ?? null;
+
+  const lockedPct = clampPct(top?.lockedPct ?? null);
+  const burnedPct = clampPct(top?.burnedPct ?? 0) ?? 0;
+  const poolType = top?.marketType ?? null;
+  const lockerName = timedLocker?.name ?? timedLocker?.type ?? top?.lockerName ?? null;
+  const lpMintBurned = isSolanaBurn(top?.lpMint);
+  const lockedSum = (lockedPct ?? 0) + burnedPct;
+  const established = (input.tokenAgeDays ?? 0) >= 90;
+
+  if (!top && !lockers.length) {
+    return unverified({
+      summary: "No LP 
