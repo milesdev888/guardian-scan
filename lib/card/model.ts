@@ -26,7 +26,7 @@ export type ShareCardModel = {
   chainName: string;
   grade: Grade;
   gradeColor: string;
-  /** e.g. "Grade B \u00b7 composite 73/100" — score uses — when non-finite */
+  /** e.g. "Grade B · composite 73/100" — score uses — when non-finite */
   gradeLine: string;
   scoreDisplay: string;
   lp: LpLine;
@@ -42,20 +42,20 @@ export type ShareCardModel = {
 
 function safeName(value: string | null | undefined): string {
   const s = (value ?? "").trim();
-  return s || "\u2014";
+  return s || "—";
 }
 
 /** Prefer printable ticker; emoji-only symbols stay as-is for canvas. */
 function safeTicker(value: string | null | undefined): string {
   const s = (value ?? "").trim();
-  return s ? `$${s}` : "$\u2014";
+  return s ? `$${s}` : "$—";
 }
 
 function scoreText(score: unknown): string {
   const n = asFiniteNumber(score);
-  if (n === null) return "\u2014";
+  if (n === null) return "—";
   const fixed = safeToFixed(n, 0);
-  return fixed ?? "\u2014";
+  return fixed ?? "—";
 }
 
 export function buildShareCardModel(
@@ -78,10 +78,10 @@ export function buildShareCardModel(
     mint,
     tokenName: safeName(report.token.name),
     ticker: safeTicker(report.token.symbol),
-    chainName: report.chain.name || "\u2014",
+    chainName: report.chain.name || "—",
     grade,
     gradeColor,
-    gradeLine: `Grade ${grade} \u00b7 composite ${scoreDisplay}/100`,
+    gradeLine: `Grade ${grade} · composite ${scoreDisplay}/100`,
     scoreDisplay,
     lp,
     chips,
