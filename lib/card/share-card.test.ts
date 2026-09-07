@@ -357,6 +357,13 @@ async function main() {
   assert.equal(model.showMedallion, true);
   const png = await renderShareCardPng(model);
   assert.ok(png.length > 5_000);
+
+  // Same pool book without badge → DISTRIBUTED LIQUIDITY chip, never LP UNLOCKED / Weak
+  const noBadgeLp = buildLpLine(report, null);
+  assert.equal(noBadgeLp.text, "LIQUIDITY DISTRIBUTED · 3 independent pools");
+  const noBadgeChips = mapShareCardChips(report, null);
+  assert.ok(noBadgeChips.some((c) => c.id === "DISTRIBUTED_LIQUIDITY"));
+  assert.ok(!noBadgeChips.some((c) => c.id === "LP_UNLOCKED"));
 }
 
 // ——— (2e) REVOKED badge ———
@@ -453,8 +460,9 @@ async function main() {
   const model = buildShareCardModel(zes!, null);
   assert.equal(model.mint, ZES_MINT);
   assert.ok(!cardTextFingerprint(model).some((s) => /NaN/.test(s)));
-  // lockedPct null → em dash in unverified line
-  assert.match(model.lp.text, /—|UNVERIFIED|UNLOCKED/);
+  // Zes may be UNVERIFIED/UNLOCKED or DISTRIBUTED depending on stored pools
+  assert.match(model.lp.text, /—|UNVERIFIED|UNLOCKED|DISTRIBUTED/);
+  assert.doesNotMatch(model.lp.text, /secured/i);
   const png = await renderShareCardPng(model);
   assert.ok(png.length > 5_000, "Zes card must render without throw");
 
