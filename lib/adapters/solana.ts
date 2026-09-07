@@ -1,1 +1,1 @@
-PLACEHOLDER_SOLANA
+@file:///workspace/guardian-scan/lib/adapters/solana.ts
