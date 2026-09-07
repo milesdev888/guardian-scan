@@ -5,8 +5,6 @@
 
 import { createCanvas, loadImage, GlobalFonts, type SKRSContext2D } from "@napi-rs/canvas";
 import QRCode from "qrcode";
-import path from "node:path";
-import fs from "node:fs";
 import type { ShareCardModel } from "@/lib/card/model";
 import { chipColors } from "@/lib/card/chips";
 
@@ -19,21 +17,20 @@ let fontsReady = false;
 
 function registerFonts() {
   if (fontsReady) return;
-  const candidates = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
-    "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
-    path.join(process.cwd(), "public/brand/fonts/NotoColorEmoji.ttf"),
+  // Literal paths + try/catch (no existsSync loop) — Turbopack flags
+  // dynamic FS probes as whole-project tracing.
+  const fonts: Array<[string, string]> = [
+    ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "DejaVuSans"],
+    ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "DejaVuSans-Bold"],
+    ["/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "DejaVuSansMono"],
+    ["/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf", "DejaVuSerif-Bold"],
+    ["/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf", "NotoColorEmoji"],
   ];
-  for (const p of candidates) {
-    if (!fs.existsSync(p)) continue;
+  for (const [file, name] of fonts) {
     try {
-      const base = path.basename(p, path.extname(p));
-      GlobalFonts.registerFromPath(p, base);
+      GlobalFonts.registerFromPath(file, name);
     } catch {
-      /* ignore */
+      /* font missing on this host */
     }
   }
   fontsReady = true;
@@ -43,17 +40,6 @@ const FONT_UI = '"DejaVu Sans", "IBM Plex Sans", "Segoe UI", sans-serif';
 const FONT_SERIF = '"DejaVu Serif", Georgia, "Times New Roman", serif';
 const FONT_MONO = '"DejaVu Sans Mono", "IBM Plex Mono", Menlo, monospace';
 const FONT_EMOJI = '"Noto Color Emoji", "DejaVu Sans", sans-serif';
-
-function assetPath(...parts: string[]): string | null {
-  const candidates = [
-    path.join(process.cwd(), "public", ...parts),
-    path.join(process.cwd(), ...parts),
-  ];
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p;
-  }
-  return null;
-}
 
 function roundRect(
   ctx: SKRSContext2D,
@@ -171,17 +157,8 @@ async function drawQr(ctx: SKRSContext2D, url: string, x: number, y: number, siz
 }
 
 async function loadMedallionImage() {
-  const local =
-    assetPath("brand", "seals", "guardian-seal-medallion.png") ||
-    assetPath("brand", "seals", "guardian-seal-valid-128.png");
-  if (local) {
-    try {
-      return await loadImage(local);
-    } catch {
-      /* fall through */
-    }
-  }
   // Runtime fetch — keep the guardian-scan repo free of multi-MB seal PNGs.
+  // Avoid local FS probes so Turbopack does not trace the whole project.
   try {
     const res = await fetch("https://cyre.dev/brand/seals/guardian-seal-medallion.png", {
       cache: "force-cache",
