@@ -174,6 +174,42 @@ async function main() {
   const model = buildShareCardModel(report, badgeValidA);
   assert.equal(model.showMedallion, true);
   assert.equal(model.gradeColor, "#E8C56A");
+  // AA platinum
+  const aaReport = baseReport({
+    token: {
+      address: C7_MINT,
+      name: "CYRE",
+      symbol: "C7",
+      decimals: 6,
+      imageUrl: null,
+    },
+    grade: "AA",
+    score: 96,
+    checks: [
+      check("honeypot_simulation", "A", "pass", "ok"),
+      check("lp_lock", "A", "pass", "PERMANENT"),
+      check("holder_concentration", "A", "pass", "dispersed"),
+      check("owner_privileges", "A", "pass", "revoked"),
+      check("transfer_tax", "A", "pass", "0%"),
+      check("contract_age", "A", "pass", "aged"),
+      check("copycats", "A", "pass", "none"),
+    ],
+    lp: {
+      tier: "PERMANENT",
+      lockedPct: 100,
+      burnedPct: 0,
+      freePct: 0,
+      unlockAt: null,
+      lockerName: "Meteora",
+      poolType: "damm_v2",
+      lifetimeEligible: true,
+      badgeEligible: true,
+    },
+  });
+  const aaModel = buildShareCardModel(aaReport, badgeValidA);
+  assert.equal(aaModel.gradeColor, "#E5E4E2");
+  assert.equal(aaModel.gradeLine, "Grade AA · composite 96/100");
+  assert.ok(!aaModel.lp.text.toLowerCase().includes("secured"));
   assert.ok(model.chips.some((c) => c.id === "GUARDIAN_VERIFIED"));
   const png = await renderShareCardPng(model);
   assert.ok(png.length > 5_000);
