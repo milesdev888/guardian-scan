@@ -42,6 +42,15 @@ export const AA_ESTABLISHED_MIN_POOLS = 3;
 export const AA_ESTABLISHED_MIN_LIQUIDITY_USD = 100_000;
 
 /**
+ * Distributed-Liquidity *presentation* (chips / LP line / headlines).
+ * Blue-chip EVM books: ≥3 independent pools and ≥$1M combined depth.
+ * Never show “Weak LP lock” / “unlocked” wording when this qualifies.
+ * Stricter than AA’s Established-path LP dollar floor ($100K + no majority).
+ */
+export const DISTRIBUTED_LIQUIDITY_MIN_POOLS = 3;
+export const DISTRIBUTED_LIQUIDITY_MIN_USD = 1_000_000;
+
+/**
  * Score → letter grade. Never returns AA — platinum requires applyAaIfEligible.
  */
 export function gradeFromScore(score: number): Grade {
@@ -104,29 +113,29 @@ export function formatProvenYears(ageDays: number | null | undefined): string | 
 
 export function formatPct(value: unknown): string {
   const n = asFiniteNumber(value);
-  if (n === null) return "—";
+  if (n === null) return "\u2014";
   const fixed = safeToFixed(n, n >= 10 || n <= -10 ? 0 : 1);
-  return fixed ? `${fixed}%` : "—";
+  return fixed ? `${fixed}%` : "\u2014";
 }
 
 export function formatUsd(value: unknown): string {
   const n = asFiniteNumber(value);
-  if (n === null) return "—";
+  if (n === null) return "\u2014";
   if (Math.abs(n) >= 1_000_000) {
     const fixed = safeToFixed(n / 1_000_000, 1);
-    return fixed ? `$${fixed}M` : "—";
+    return fixed ? `$${fixed}M` : "\u2014";
   }
   if (Math.abs(n) >= 1_000) {
     const fixed = safeToFixed(n / 1_000, 1);
-    return fixed ? `$${fixed}k` : "—";
+    return fixed ? `$${fixed}k` : "\u2014";
   }
   const fixed = safeToFixed(n, 0);
-  return fixed ? `$${fixed}` : "—";
+  return fixed ? `$${fixed}` : "\u2014";
 }
 
 export function shorten(address: string, size = 4) {
   if (address.length <= size * 2 + 2) return address;
-  return `${address.slice(0, size + (address.startsWith("0x") ? 2 : 0))}…${address.slice(-size)}`;
+  return `${address.slice(0, size + (address.startsWith("0x") ? 2 : 0))}\u2026${address.slice(-size)}`;
 }
 
 export function check(partial: Omit<Check, "grade"> & { grade?: Grade }): Check {
@@ -145,17 +154,25 @@ export function pattern(
   return { id, severity, title, detail };
 }
 
-function headlineFromChecks(checks: Check[]): string {
+function headlineFromChecks(
+  checks: Check[],
+  pools?: LiquidityPool[] | null,
+): string {
   const byId = new Map(checks.map((item) => [item.id, item]));
   const bits: string[] = [];
 
   const lp = byId.get("lp_lock");
   if (lp && lp.grade !== "U") {
     const tier = typeof lp.evidence?.tier === "string" ? lp.evidence.tier : null;
+    const distributed =
+      lp.evidence?.distributedLiquidity === true || isDistributedLiquidity(pools);
     if (tier === "PERMANENT" || tier === "BURNED" || lp.grade === "A") {
       bits.push("Locked liquidity");
     } else if (lp.grade === "B") {
       bits.push("Partially locked liquidity");
+    } else if (distributed) {
+      // Deep multi-pool books — never "Weak LP lock" (that label is for thin young unlocks).
+      bits.push("Distributed liquidity");
     } else {
       bits.push("Weak LP lock");
     }
@@ -186,7 +203,7 @@ function headlineFromChecks(checks: Check[]): string {
       .filter((item) => item.status === "flag")
       .map((item) => item.title.toLowerCase());
     return flagTitles.length
-      ? flagTitles.slice(0, 3).join(" · ")
+      ? flagTitles.slice(0, 3).join(" \u00b7 ")
       : "No high-severity patterns in the v2 checks";
   }
 
@@ -197,10 +214,14 @@ function headlineFromChecks(checks: Check[]): string {
 
 /**
  * Weighted composite score from check grades.
- * A=100 · B=80 · C=55 · D=30 · F=0. Grade U excluded from the denominator.
- * Letter from score is A–F only; call applyAaIfEligible for platinum.
+ * A=100 \u00b7 B=80 \u00b7 C=55 \u00b7 D=30 \u00b7 F=0. Grade U excluded from the denominator.
+ * Letter from score is A\u2013F only; call applyAaIfEligible for platinum.
  */
-export function compileReportMeta(checks: Check[], extraPatterns: Pattern[] = []) {
+export function compileReportMeta(
+  checks: Check[],
+  extraPatterns: Pattern[] = [],
+  opts?: { pools?: LiquidityPool[] | null },
+) {
   const patterns = [...extraPatterns];
   let weighted = 0;
   let weightSum = 0;
@@ -220,7 +241,7 @@ export function compileReportMeta(checks: Check[], extraPatterns: Pattern[] = []
   const score =
     weightSum > 0 ? Math.max(0, Math.min(100, Math.round(weighted / weightSum))) : 50;
   const grade = gradeFromScore(score);
-  const headline = headlineFromChecks(checks);
+  const headline = headlineFromChecks(checks, opts?.pools);
 
   return { score, grade, headline, patterns };
 }
@@ -232,7 +253,7 @@ export type AaPoolStats = {
   noSingleMajority: boolean;
 };
 
-/** Independent pools + liquidity concentration (AA Established-path LP gate). */
+/** Independent pools + liquidity concentration (AA / Distributed-Liquidity gate). */
 export function analyzePoolsForAa(pools: LiquidityPool[] | null | undefined): AaPoolStats {
   const rows = (Array.isArray(pools) ? pools : [])
     .map((p) => ({
@@ -260,6 +281,23 @@ export function analyzePoolsForAa(pools: LiquidityPool[] | null | undefined): Aa
     maxPoolShare: maxShare,
     noSingleMajority: independent.length >= 2 && maxShare <= 0.5,
   };
+}
+
+/**
+/**
+ * Deep distributed liquidity \u2014 Established-path *presentation* for chips / headlines / LP line.
+ * Threshold: \u22653 independent pools and \u2265$1M combined depth
+ * (DISTRIBUTED_LIQUIDITY_MIN_POOLS / DISTRIBUTED_LIQUIDITY_MIN_USD).
+ * AA eligibility still requires \u2265$100K + no single-pool majority via analyzePoolsForAa.
+ */
+export function isDistributedLiquidity(
+  pools: LiquidityPool[] | null | undefined,
+): boolean {
+  const stats = analyzePoolsForAa(pools);
+  return (
+    stats.poolCount >= DISTRIBUTED_LIQUIDITY_MIN_POOLS &&
+    stats.totalLiquidityUsd >= DISTRIBUTED_LIQUIDITY_MIN_USD
+  );
 }
 
 export function readAgeDays(checks: Check[]): number | null {
@@ -337,7 +375,7 @@ function lpQualifiesForAa(
 }
 
 /**
- * AA (Platinum) — all gates must hold. If any fails, grade stays A at best
+ * AA (Platinum) \u2014 all gates must hold. If any fails, grade stays A at best
  * (never round a B/C up). Score gate alone is not enough.
  */
 export function evaluateAaEligibility(input: {
@@ -375,7 +413,7 @@ export function evaluateAaEligibility(input: {
 }
 
 /**
- * Upgrade A → AA when every platinum gate holds. Never upgrades below A.
+ * Upgrade A \u2192 AA when every platinum gate holds. Never upgrades below A.
  */
 export function applyAaIfEligible(
   score: number,
