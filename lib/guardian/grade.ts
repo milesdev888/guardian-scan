@@ -145,17 +145,25 @@ export function pattern(
   return { id, severity, title, detail };
 }
 
-function headlineFromChecks(checks: Check[]): string {
+function headlineFromChecks(
+  checks: Check[],
+  pools?: LiquidityPool[] | null,
+): string {
   const byId = new Map(checks.map((item) => [item.id, item]));
   const bits: string[] = [];
 
   const lp = byId.get("lp_lock");
   if (lp && lp.grade !== "U") {
     const tier = typeof lp.evidence?.tier === "string" ? lp.evidence.tier : null;
+    const distributed =
+      lp.evidence?.distributedLiquidity === true || isDistributedLiquidity(pools);
     if (tier === "PERMANENT" || tier === "BURNED" || lp.grade === "A") {
       bits.push("Locked liquidity");
     } else if (lp.grade === "B") {
       bits.push("Partially locked liquidity");
+    } else if (distributed) {
+      // Deep multi-pool books — never "Weak LP lock" (that label is for thin young unlocks).
+      bits.push("Distributed liquidity");
     } else {
       bits.push("Weak LP lock");
     }
@@ -200,7 +208,11 @@ function headlineFromChecks(checks: Check[]): string {
  * A=100 · B=80 · C=55 · D=30 · F=0. Grade U excluded from the denominator.
  * Letter from score is A–F only; call applyAaIfEligible for platinum.
  */
-export function compileReportMeta(checks: Check[], extraPatterns: Pattern[] = []) {
+export function compileReportMeta(
+  checks: Check[],
+  extraPatterns: Pattern[] = [],
+  opts?: { pools?: LiquidityPool[] | null },
+) {
   const patterns = [...extraPatterns];
   let weighted = 0;
   let weightSum = 0;
@@ -220,7 +232,7 @@ export function compileReportMeta(checks: Check[], extraPatterns: Pattern[] = []
   const score =
     weightSum > 0 ? Math.max(0, Math.min(100, Math.round(weighted / weightSum))) : 50;
   const grade = gradeFromScore(score);
-  const headline = headlineFromChecks(checks);
+  const headline = headlineFromChecks(checks, opts?.pools);
 
   return { score, grade, headline, patterns };
 }
@@ -232,7 +244,7 @@ export type AaPoolStats = {
   noSingleMajority: boolean;
 };
 
-/** Independent pools + liquidity concentration (AA Established-path LP gate). */
+/** Independent pools + liquidity concentration (AA / Distributed-Liquidity gate). */
 export function analyzePoolsForAa(pools: LiquidityPool[] | null | undefined): AaPoolStats {
   const rows = (Array.isArray(pools) ? pools : [])
     .map((p) => ({
@@ -260,6 +272,21 @@ export function analyzePoolsForAa(pools: LiquidityPool[] | null | undefined): Aa
     maxPoolShare: maxShare,
     noSingleMajority: independent.length >= 2 && maxShare <= 0.5,
   };
+}
+
+/**
+ * Deep distributed liquidity — Established-path *presentation* for chips / headlines / LP line.
+ * ≥3 independent pools and ≥$100K total depth.
+ * (AA eligibility still requires no single-pool majority via analyzePoolsForAa.)
+ */
+export function isDistributedLiquidity(
+  pools: LiquidityPool[] | null | undefined,
+): boolean {
+  const stats = analyzePoolsForAa(pools);
+  return (
+    stats.poolCount >= AA_ESTABLISHED_MIN_POOLS &&
+    stats.totalLiquidityUsd >= AA_ESTABLISHED_MIN_LIQUIDITY_USD
+  );
 }
 
 export function readAgeDays(checks: Check[]): number | null {
