@@ -1,6 +1,17 @@
 import { DISCLAIMER, type Check, type EvmChainConfig, type GuardianReport, type Holder, type LiquidityPool, type Pattern, type PresenceMatch, type SourceStatus } from "@/lib/guardian/types";
 import { findCopycats } from "@/lib/guardian/copycats";
-import { check, compileReportMeta, daysAgo, formatAge, formatPct, formatUsd, pattern } from "@/lib/guardian/grade";
+import {
+  applyAaIfEligible,
+  analyzePoolsForAa,
+  check,
+  compileReportMeta,
+  daysAgo,
+  formatAge,
+  formatPct,
+  formatUsd,
+  isDistributedLiquidity,
+  pattern,
+} from "@/lib/guardian/grade";
 import { isEvmAddress } from "@/lib/chains/detect";
 import { fetchDexToken, filterPairsForChain, identityFromPairs, pickCanonicalPair } from "@/lib/sources/dexscreener";
 import { fetchExplorerCreation, fetchExplorerSource, fetchFirstTransactionTime } from "@/lib/sources/explorer";
@@ -367,7 +378,9 @@ export class EvmAdapter implements ChainAdapter {
       evm.dexes.some((dex) => pair.dexId.toLowerCase().includes(dex.id.toLowerCase()) || dex.id.includes(pair.dexId)),
     );
     const totalLiq = pairs.reduce((sum, pair) => sum + (pair.liquidityUsd ?? 0), 0);
-    const established = (ageDays !== null && ageDays >= 90) || goplus?.trust_list === "1";
+    const ageEstablished = (ageDays !== null && ageDays >= 90) || goplus?.trust_list === "1";
+    const poolStats = analyzePoolsForAa(pools);
+    const distributed = isDistributedLiquidity(pools);
     checks.push(
       !pairs.length && !lpHolders.length
         ? check({
@@ -386,19 +399,45 @@ export class EvmAdapter implements ChainAdapter {
               grade: "A",
               summary: `${formatPct(Math.max(lockedPct, burnedPct))} of tracked LP is locked or burned.`,
               detail: `Liquidity on listed pools is ${formatUsd(totalLiq)}. Lock data comes from GoPlus-recognized lockers and burn addresses.`,
-              evidence: { lockedPct, burnedPct, totalLiq, mainDexHit },
+              evidence: { lockedPct, burnedPct, totalLiq, mainDexHit, distributedLiquidity: distributed },
             })
-          : check({
-              id: "lp_lock",
-              title: "LP lock / burn",
-              status: "flag",
-              grade: lockedPct < 10 && !established ? "F" : "C",
-              summary: `${formatPct(lockedPct)} of tracked LP is locked; ${formatPct(burnedPct)} burned.`,
-              detail: established
-                ? `Unlocked AMM LP on a ${formatAge(createdAt)} contract is a pattern, not the same rug vector as a day-old launch. Pools: ${pools.map((p) => p.dex).join(", ") || "none listed"}.`
-                : `Unlocked LP on ${evm.dexes.map((d) => d.name).join(", ")} is the classic rug vector for new DEX launches. Pools: ${pools.map((p) => p.dex).join(", ") || "none listed"}.`,
-              evidence: { lockedPct, burnedPct, totalLiq, established },
-            }),
+          : distributed
+            ? check({
+                id: "lp_lock",
+                title: "LP lock / burn",
+                status: "pass",
+                grade: "B",
+                summary: `Distributed liquidity · ${poolStats.poolCount} independent pools · ${formatUsd(poolStats.totalLiquidityUsd)} depth.`,
+                detail:
+                  "Deep multi-pool books with no single-pool majority. Unlocked AMM LP here is not the same rug vector as a young token with one thin unlocked pool.",
+                evidence: {
+                  lockedPct,
+                  burnedPct,
+                  totalLiq,
+                  mainDexHit,
+                  distributedLiquidity: true,
+                  poolCount: poolStats.poolCount,
+                  maxPoolShare: poolStats.maxPoolShare,
+                },
+              })
+            : check({
+                id: "lp_lock",
+                title: "LP lock / burn",
+                status: "flag",
+                grade: lockedPct < 10 && !ageEstablished ? "F" : "C",
+                summary: `${formatPct(lockedPct)} of tracked LP is locked; ${formatPct(burnedPct)} burned.`,
+                detail: ageEstablished
+                  ? `Unlocked AMM LP on a ${formatAge(createdAt)} contract is a pattern, not the same rug vector as a day-old launch. Pools: ${pools.map((p) => p.dex).join(", ") || "none listed"}.`
+                  : `Unlocked LP on ${evm.dexes.map((d) => d.name).join(", ")} is the classic rug vector for new DEX launches. Pools: ${pools.map((p) => p.dex).join(", ") || "none listed"}.`,
+                evidence: {
+                  lockedPct,
+                  burnedPct,
+                  totalLiq,
+                  established: ageEstablished,
+                  distributedLiquidity: false,
+                  poolCount: poolStats.poolCount,
+                },
+              }),
     );
 
     checks.push(
@@ -440,6 +479,7 @@ export class EvmAdapter implements ChainAdapter {
             grade: "U",
             summary: "Creation time was not available.",
             detail: "Explorer creation API and DexScreener pairCreatedAt both missed.",
+            evidence: { ageDays: null, createdAt },
           })
         : ageDays < 2
           ? check({
@@ -449,7 +489,7 @@ export class EvmAdapter implements ChainAdapter {
               grade: "D",
               summary: `Contract is ${formatAge(createdAt)} old.`,
               detail: "Brand-new contracts are where most copycat launches cluster. Age is a pattern, not proof of intent.",
-              evidence: { createdAt },
+              evidence: { ageDays, createdAt },
             })
           : check({
               id: "contract_age",
@@ -458,7 +498,7 @@ export class EvmAdapter implements ChainAdapter {
               grade: ageDays < 30 ? "B" : "A",
               summary: `Contract is ${formatAge(createdAt)} old.`,
               detail: deployer ? `Deployer ${deployer}.` : "Deployer not listed.",
-              evidence: { createdAt, deployer },
+              evidence: { ageDays, createdAt, deployer },
             }),
     );
 
@@ -554,7 +594,17 @@ export class EvmAdapter implements ChainAdapter {
       );
     }
 
-    const { grade, score, headline, patterns } = compileReportMeta(checks, extraPatterns);
+    const { grade: baseGrade, score, headline, patterns } = compileReportMeta(
+      checks,
+      extraPatterns,
+      { pools },
+    );
+    const { grade } = applyAaIfEligible(score, baseGrade, {
+      checks,
+      pools,
+      lp: null,
+      patterns,
+    });
 
     return {
       schema: "guardian.report.v2",

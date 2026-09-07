@@ -10,6 +10,7 @@ import type {
   PresenceMatch,
   ScanResponse,
 } from "@/lib/guardian/types";
+import { putStoredScan } from "@/lib/card/store";
 
 export const solanaAdapter = new SolanaAdapter();
 export const evmAdapter = new EvmAdapter();
@@ -45,6 +46,8 @@ function remember(report: GuardianReport, address: string, currency?: string) {
     expires: Date.now() + CACHE_MS,
     report,
   });
+  // 24h share-card store — same record the card endpoint paints from
+  putStoredScan(report);
 }
 
 export async function probeEvmPresence(address: string): Promise<PresenceMatch[]> {

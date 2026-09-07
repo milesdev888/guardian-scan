@@ -1,6 +1,7 @@
 import { AddressInput } from "@/components/scanner/address-input";
 import { ChainBillboard } from "@/components/scanner/chain-billboard";
 import { ScanResultView } from "@/components/scanner/report-view";
+import { ShareOnXButton } from "@/components/scanner/share-on-x";
 import { buttonVariants } from "@/components/ui/button";
 import { detectFamily } from "@/lib/chains/detect";
 import type { ScanResponse, XrplIssuance } from "@/lib/guardian/types";
@@ -18,6 +19,10 @@ export function ScanForm({
   const detected = address ? detectFamily(address) : { family: null };
   const familyLabel =
     detected.family === "evm" ? "EVM" : detected.family === "xrpl" ? "XRPL" : detected.family === "solana" ? "Solana" : null;
+  const activeReport =
+    result?.kind === "report"
+      ? (result.reports.find((item) => item.chain.id === chain) ?? result.reports[0])
+      : null;
 
   return (
     <div className="mx-auto w-full max-w-5xl">
@@ -65,8 +70,17 @@ export function ScanForm({
         {result?.kind === "xrpl-issuances" ? (
           <IssuancePicker address={result.address} issuances={result.issuances} message={result.message} />
         ) : null}
-        {result?.kind === "report" ? (
-          <ScanResultView result={result} activeChain={chain} />
+        {result?.kind === "report" && activeReport ? (
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-2">
+              <ShareOnXButton
+                address={activeReport.token.address}
+                grade={activeReport.grade}
+                score={activeReport.score}
+              />
+            </div>
+            <ScanResultView result={result} activeChain={chain} />
+          </div>
         ) : null}
         {!result ? <EmptyIntro /> : null}
       </div>
