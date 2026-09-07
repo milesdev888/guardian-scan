@@ -168,11 +168,11 @@ function headlineFromChecks(
       lp.evidence?.distributedLiquidity === true || isDistributedLiquidity(pools);
     if (tier === "PERMANENT" || tier === "BURNED" || lp.grade === "A") {
       bits.push("Locked liquidity");
+    } else if (distributed) {
+      // Deep multi-pool books — never "Weak LP lock" / "unlocked" (those labels are for thin young unlocks).
+      bits.push("Distributed liquidity");
     } else if (lp.grade === "B") {
       bits.push("Partially locked liquidity");
-    } else if (distributed) {
-      // Deep multi-pool books — never "Weak LP lock" (that label is for thin young unlocks).
-      bits.push("Distributed liquidity");
     } else {
       bits.push("Weak LP lock");
     }

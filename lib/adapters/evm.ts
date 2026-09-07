@@ -409,7 +409,7 @@ export class EvmAdapter implements ChainAdapter {
                 grade: "B",
                 summary: `Distributed liquidity · ${poolStats.poolCount} independent pools · ${formatUsd(poolStats.totalLiquidityUsd)} depth.`,
                 detail:
-                  "Deep multi-pool books with no single-pool majority. Unlocked AMM LP here is not the same rug vector as a young token with one thin unlocked pool.",
+                  "Deep multi-pool books with no single-pool majority — protocol-depth liquidity across independent venues, not the same risk shape as a young token with one thin pool.",
                 evidence: {
                   lockedPct,
                   burnedPct,
