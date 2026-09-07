@@ -1,0 +1,317 @@
+{
+  "schema": "guardian.report.v2",
+  "scannedAt": "2026-09-07T15:16:56.709Z",
+  "chain": {
+    "id": "solana",
+    "name": "Solana",
+    "family": "solana",
+    "explorerUrl": "https://solscan.io/token/979sitxCjWFPdAsrF2ybKNENwFcpiHDwaAasC5Xa5qww"
+  },
+  "token": {
+    "address": "979sitxCjWFPdAsrF2ybKNENwFcpiHDwaAasC5Xa5qww",
+    "name": "CYRE",
+    "symbol": "C7",
+    "decimals": null,
+    "imageUrl": "https://cdn.dexscreener.com/cms/images/w-CjGRyr8Y_15yjV?width=800&height=800&quality=95&format=auto"
+  },
+  "grade": "A",
+  "score": 91,
+  "headline": "Locked liquidity, young token, dispersed holders",
+  "disclaimer": "Guardian reports grades and on-chain patterns, not a verdict. A high grade is not an endorsement. A low grade is not a determination that the contract is fraudulent.",
+  "patterns": [
+    {
+      "id": "copycats",
+      "severity": "watch",
+      "title": "Same ticker (C7) on Solana",
+      "detail": "Oldest and deepest same-ticker mints are listed. The scanned mint is not assumed original."
+    }
+  ],
+  "checks": [
+    {
+      "grade": "A",
+      "id": "verified_source",
+      "title": "Metadata / source",
+      "status": "pass",
+      "summary": "Metadata update authority is frozen.",
+      "detail": "Guardian maps Solana metadata authority onto the same verified-source slot used for EVM explorer verification."
+    },
+    {
+      "grade": "A",
+      "id": "proxy_upgradeable",
+      "title": "Proxy / upgradeable",
+      "status": "pass",
+      "summary": "Solana SPL tokens are not EVM proxies.",
+      "detail": "Upgrade authority on a custom program is out of v2 scope. Standard Token / Token-2022 mints are reported through mint and freeze authorities instead."
+    },
+    {
+      "grade": "A",
+      "id": "owner_privileges",
+      "title": "Owner privileges",
+      "status": "pass",
+      "summary": "Mint and freeze authorities are revoked.",
+      "detail": "No mint/freeze authority returned by RugCheck or GoPlus."
+    },
+    {
+      "grade": "U",
+      "id": "transfer_tax",
+      "title": "Transfer tax",
+      "status": "unknown",
+      "summary": "No transfer-fee extension in the GoPlus payload.",
+      "detail": "Solana does not use EVM buy/sell tax fields; Guardian maps Token-2022 transfer fees here."
+    },
+    {
+      "grade": "B",
+      "id": "honeypot_simulation",
+      "title": "Honeypot simulation",
+      "status": "pass",
+      "summary": "No sell-trap item in the RugCheck risk list.",
+      "detail": "Solana has no Honeypot.is buy\u2192sell fork. Guardian uses RugCheck risks as the equivalent slot so the report shape stays identical to EVM."
+    },
+    {
+      "grade": "A",
+      "id": "lp_lock",
+      "title": "LP lock / burn",
+      "status": "pass",
+      "summary": "🔒 PERMANENT — 100% locked in a protocol-level position (meteora_damm_v2).",
+      "detail": "Meteora DAMM v2 (and equivalent permanent positions) do not mint transferable LP tokens that a team wallet can pull. This is a lifetime lock tier.",
+      "evidence": {
+        "tier": "PERMANENT",
+        "lockedPct": 100,
+        "burnedPct": 0,
+        "freePct": 0,
+        "unlockAt": null,
+        "lockerName": "Meteora DAMM v2",
+        "poolType": "meteora_damm_v2",
+        "lifetimeEligible": true
+      }
+    },
+    {
+      "grade": "A",
+      "id": "holder_concentration",
+      "title": "Holder concentration",
+      "status": "pass",
+      "summary": "Top 10 hold 99% raw · 22% excluding locked & LP.",
+      "detail": "7 free-float accounts scored; protocol vaults and burns labeled but excluded.",
+      "evidence": {
+        "rawTop10": 98.99877596104696,
+        "adjustedTop10": 22.390046761309105,
+        "excludedPct": 76.60872919973785
+      }
+    },
+    {
+      "grade": "B",
+      "id": "contract_age",
+      "title": "Contract age",
+      "status": "pass",
+      "summary": "First pool is 4 days old.",
+      "detail": "Age from first listed pool / detection timestamp."
+    },
+    {
+      "grade": "U",
+      "id": "deployer_age",
+      "title": "Deployer wallet age",
+      "status": "unknown",
+      "summary": "Creator Cb3VXcxvqnF9PaF17P3jU5VeaQovYPKkv7vmSMS7Dtuz — first-signature age not fetched in v2.",
+      "detail": "Creator resolved from the mint's earliest on-chain initializeMint / fee payer (RugCheck omitted creator).",
+      "evidence": {
+        "deployer": "Cb3VXcxvqnF9PaF17P3jU5VeaQovYPKkv7vmSMS7Dtuz"
+      }
+    },
+    {
+      "grade": "C",
+      "id": "copycats",
+      "title": "Same-ticker copies",
+      "status": "flag",
+      "summary": "4 other C7 mint(s) on Solana. Oldest and deepest are flagged.",
+      "detail": "Oldest: 3Q2XBcjv8BBwXXEPY7wXVTgjYT3625bYjjvpsnPwzcZs (2.4 years). Deepest: 5XyR32Yuk1bEN6hBggMfuQcxhSbyxJ8SzGxtqY3qpump ($2.3k). Search depth: DexScreener + Jupiter token search + GeckoTerminal pools."
+    }
+  ],
+  "copycats": [
+    {
+      "address": "3Q2XBcjv8BBwXXEPY7wXVTgjYT3625bYjjvpsnPwzcZs",
+      "name": "C7",
+      "symbol": "C7",
+      "chainId": "solana",
+      "chainName": "Solana",
+      "pairAddress": "2Wb1wMhwr67kt6w8VcNEZvsx1xmikcp4n6R18BWGxAJn",
+      "dex": "geckoterminal",
+      "liquidityUsd": 83.7526,
+      "createdAt": 1712617769000,
+      "flags": [
+        "same-chain",
+        "oldest"
+      ],
+      "url": "https://www.geckoterminal.com/solana/pools/2Wb1wMhwr67kt6w8VcNEZvsx1xmikcp4n6R18BWGxAJn"
+    },
+    {
+      "address": "5XyR32Yuk1bEN6hBggMfuQcxhSbyxJ8SzGxtqY3qpump",
+      "name": "C7",
+      "symbol": "C7",
+      "chainId": "solana",
+      "chainName": "Solana",
+      "pairAddress": "HZX8kig9wpT8Jba8UPrLp8nvbcY3BgbgLaHvnP3Ypegb",
+      "dex": "geckoterminal",
+      "liquidityUsd": 2268.6499,
+      "createdAt": 1788399929000,
+      "flags": [
+        "same-chain",
+        "deepest"
+      ],
+      "url": "https://www.geckoterminal.com/solana/pools/HZX8kig9wpT8Jba8UPrLp8nvbcY3BgbgLaHvnP3Ypegb"
+    },
+    {
+      "address": "HvUUM4GEKKiH8jyucACf9Zn3Re4tfgKVtKptnFsUpump",
+      "name": "Cyre",
+      "symbol": "C7",
+      "chainId": "solana",
+      "chainName": "Solana",
+      "pairAddress": null,
+      "dex": null,
+      "liquidityUsd": null,
+      "createdAt": null,
+      "flags": [
+        "same-chain"
+      ],
+      "url": "https://solscan.io/token/HvUUM4GEKKiH8jyucACf9Zn3Re4tfgKVtKptnFsUpump"
+    },
+    {
+      "address": "D5piBdr3D4jxA7h7v7bZnsyPLoZ6v5dKNKXrHNxbpump",
+      "name": "GREEN BULL",
+      "symbol": "C7",
+      "chainId": "solana",
+      "chainName": "Solana",
+      "pairAddress": null,
+      "dex": null,
+      "liquidityUsd": null,
+      "createdAt": null,
+      "flags": [
+        "same-chain"
+      ],
+      "url": "https://solscan.io/token/D5piBdr3D4jxA7h7v7bZnsyPLoZ6v5dKNKXrHNxbpump"
+    }
+  ],
+  "pools": [
+    {
+      "dex": "meteora",
+      "pairAddress": "78fZQMdvzFVx4LbGDe6cJBC6jWH2nVHyWU6x7JPnFQLG",
+      "quote": "SOL",
+      "liquidityUsd": 5537.98,
+      "createdAt": 1788417291000,
+      "url": "https://dexscreener.com/solana/78fzqmdvzfvx4lbgde6cjbc6jwh2nvhywu6x7jpnfqlg"
+    }
+  ],
+  "holders": [
+    {
+      "address": "FjCENp8te61D9i9L5VEyJ2tTz5XhUSzV1xHU47tCxn3s",
+      "percent": 60.1140198373921,
+      "tag": "Streamflow Vault",
+      "locked": true
+    },
+    {
+      "address": "HDwozXjfmdRbUkhWm11YXUmLe8zJwDQNSqEEUwEtbXH3",
+      "percent": 11.485207709229751,
+      "tag": "Meteora pool vault",
+      "locked": true
+    },
+    {
+      "address": "9gABr8R1EPji27WU9g5F9TsK9RB9GJhToSAWSW2WPp2V",
+      "percent": 10.000003299962088,
+      "tag": null,
+      "locked": null
+    },
+    {
+      "address": "CGUGAAX73PuG2scdaKPaHV8qQFT9pdZDB2Fi3YZvQxPd",
+      "percent": 5.009501653116009,
+      "tag": "Streamflow Vault",
+      "locked": true
+    },
+    {
+      "address": "AQT1Vsxb8aHrxm96QbEz59dibAuQdHoK3xbpnPRwvYor",
+      "percent": 3.8874315015812346,
+      "tag": null,
+      "locked": null
+    },
+    {
+      "address": "4kzefmS1vjiMgfgnDRgJLqDr9YG6ZAMAaTU7X67FzZNE",
+      "percent": 2.500000824990522,
+      "tag": null,
+      "locked": null
+    },
+    {
+      "address": "HkbZywfG7HFKe7fi1Au7SkzfbS51HaEgGybZfiQqD9Pp",
+      "percent": 2.500000824990522,
+      "tag": null,
+      "locked": null
+    },
+    {
+      "address": "7DN5nGm8tWtP4sszZWf1npXs3Dnd2W76wbk1xqGPqspW",
+      "percent": 1.5026094573552606,
+      "tag": null,
+      "locked": null
+    },
+    {
+      "address": "E7NRovFfViNuJJwfeXbjMEBoHSS77EGpEsqGdLeJdSmu",
+      "percent": 1.0000005224332724,
+      "tag": null,
+      "locked": null
+    },
+    {
+      "address": "21XWfv1Q9mraSP4ENANMgeCyQbHxoFZrF7HzwghnBQHb",
+      "percent": 1.0000003299962088,
+      "tag": null,
+      "locked": null
+    }
+  ],
+  "sources": [
+    {
+      "id": "rugcheck",
+      "ok": true
+    },
+    {
+      "id": "goplus-solana",
+      "ok": true
+    },
+    {
+      "id": "dexscreener",
+      "ok": true
+    },
+    {
+      "id": "solana-rpc",
+      "ok": true
+    },
+    {
+      "id": "solana-pool-owner",
+      "ok": true
+    },
+    {
+      "id": "solana-holder-authorities",
+      "ok": false,
+      "error": "HTTP 403 from Solana RPC"
+    },
+    {
+      "id": "solana-holder-owners",
+      "ok": false,
+      "error": "HTTP 403 from Solana RPC"
+    },
+    {
+      "id": "solana-deployer",
+      "ok": true
+    }
+  ],
+  "lp": {
+    "tier": "PERMANENT",
+    "lockedPct": 100,
+    "burnedPct": 0,
+    "freePct": 0,
+    "unlockAt": null,
+    "lockerName": "Meteora DAMM v2",
+    "poolType": "meteora_damm_v2",
+    "lifetimeEligible": true,
+    "badgeEligible": true
+  },
+  "concentration": {
+    "rawTop10": 98.99877596104696,
+    "adjustedTop10": 22.390046761309105,
+    "excludedPct": 76.60872919973785
+  }
+}
