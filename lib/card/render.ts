@@ -12,6 +12,8 @@ import { chipColors } from "@/lib/card/chips";
 
 export const CARD_WIDTH = 1600;
 export const CARD_HEIGHT = 1067;
+/** Compressed OG unfurl — long edge ~1024px, target under 300KB. */
+export const CARD_OG_WIDTH = 1024;
 
 let fontsReady = false;
 
@@ -299,4 +301,33 @@ export async function renderShareCardPng(model: ShareCardModel): Promise<Buffer>
   ctx.textAlign = "left";
 
   return Buffer.from(canvas.toBuffer("image/png"));
+}
+
+/**
+ * Downscale a full-res share card for OG/Twitter unfurls (~1024px long edge).
+ * Full 1600×1067 remains at /api/card/<mint>.png.
+ */
+export async function compressShareCardPng(
+  fullPng: Buffer,
+  maxWidth: number = CARD_OG_WIDTH,
+): Promise<Buffer> {
+  const img = await loadImage(fullPng);
+  const scale = Math.min(1, maxWidth / img.width);
+  const w = Math.max(1, Math.round(img.width * scale));
+  const h = Math.max(1, Math.round(img.height * scale));
+  if (w === img.width && h === img.height) {
+    return Buffer.from(fullPng);
+  }
+  const canvas = createCanvas(w, h);
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, 0, 0, w, h);
+  return Buffer.from(canvas.toBuffer("image/png"));
+}
+
+/** Render full card then compress for OG crawlers. */
+export async function renderShareCardOgPng(model: ShareCardModel): Promise<Buffer> {
+  const full = await renderShareCardPng(model);
+  return compressShareCardPng(full, CARD_OG_WIDTH);
 }
