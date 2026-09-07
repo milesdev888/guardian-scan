@@ -341,27 +341,32 @@ export class SolanaAdapter implements ChainAdapter {
           }),
     );
 
-    const feeRate =
-      (goplus.data?.transfer_fee as { current_fee_rate?: { fee_rate?: number } } | undefined)
+    const feeRateRaw =
+      (goplus.data?.transfer_fee as { current_fee_rate?: { fee_rate?: number | string } } | undefined)
         ?.current_fee_rate?.fee_rate ?? null;
+    const feeRate =
+      feeRateRaw === null || feeRateRaw === undefined || feeRateRaw === ""
+        ? null
+        : Number(feeRateRaw);
+    const feeRateNum = feeRate !== null && Number.isFinite(feeRate) ? feeRate : null;
     checks.push(
-      feeRate && feeRate > 0
+      feeRateNum && feeRateNum > 0
         ? check({
             id: "transfer_tax",
             title: "Transfer tax",
             status: "flag",
-            grade: feeRate >= 10 ? "D" : "C",
-            summary: `Token-2022 transfer fee ≈ ${formatPct(feeRate)}.`,
+            grade: feeRateNum >= 10 ? "D" : "C",
+            summary: `Token-2022 transfer fee ≈ ${formatPct(feeRateNum)}.`,
             detail:
               "Transfer-fee extension on Token-2022. This is the Solana equivalent of an EVM transfer tax.",
           })
         : check({
             id: "transfer_tax",
             title: "Transfer tax",
-            status: feeRate === 0 ? "pass" : "unknown",
-            grade: feeRate === 0 ? "A" : "U",
+            status: feeRateNum === 0 ? "pass" : "unknown",
+            grade: feeRateNum === 0 ? "A" : "U",
             summary:
-              feeRate === 0
+              feeRateNum === 0
                 ? "No Token-2022 transfer fee reported."
                 : "No transfer-fee extension in the GoPlus payload.",
             detail:

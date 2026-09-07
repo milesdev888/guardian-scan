@@ -1,4 +1,4 @@
-import { check } from "@/lib/guardian/grade";
+import { check, formatPct, safeToFixed } from "@/lib/guardian/grade";
 import type { Check, CheckStatus, Family, Grade, LpLockInfo, LpTier } from "@/lib/guardian/types";
 
 export type { LpTier, LpLockInfo };
@@ -151,9 +151,15 @@ function looksTimedLocker(name: string | null | undefined, programId?: string | 
   return TIMED_LOCKER_NAMES.some((item) => hay.includes(item));
 }
 
-function clampPct(value: number | null | undefined): number | null {
-  if (value === null || value === undefined || Number.isNaN(value)) return null;
-  return Math.min(100, Math.max(0, value));
+function clampPct(value: number | null | undefined | string): number | null {
+  const n =
+    value === null || value === undefined || value === ""
+      ? null
+      : typeof value === "number"
+        ? value
+        : Number(value);
+  if (n === null || !Number.isFinite(n)) return null;
+  return Math.min(100, Math.max(0, n));
 }
 
 function daysUntil(iso: string | null): number | null {
@@ -243,7 +249,7 @@ function classifyXrpl(input: LpObservation): LpAssessment {
       unlockAt: null,
       lockerName: amm,
       poolType: "xls30_amm",
-      summary: `🔥 BURNED — ${burnedPct.toFixed(0)}% of AMM LP tokens sit at a blackhole address.`,
+      summary: `🔥 BURNED — ${formatPct(burnedPct)} of AMM LP tokens sit at a blackhole address.`,
       detail:
         "LP tokens at a known XRPL blackhole cannot be withdrawn. This is the lifetime-burn equivalent. PERMANENT does not apply on XRPL — there is no protocol-level DAMM lock.",
       grade: "A",
@@ -346,7 +352,7 @@ function classifySolana(input: LpObservation): LpAssessment {
       unlockAt: null,
       lockerName: lockerName,
       poolType,
-      summary: `🔥 BURNED — ${burnedPct.toFixed(0)}% of LP is at a burn address.`,
+      summary: `🔥 BURNED — ${formatPct(burnedPct)} of LP is at a burn address.`,
       detail: "Burned LP cannot be withdrawn. This is a lifetime lock tier.",
       grade: "A",
       status: "pass",
@@ -484,7 +490,7 @@ function classifyEvm(input: LpObservation): LpAssessment {
       unlockAt: null,
       lockerName,
       poolType,
-      summary: `🔥 BURNED — ${burnedPct.toFixed(0)}% of tracked LP is at a burn address.`,
+      summary: `🔥 BURNED — ${formatPct(burnedPct)} of tracked LP is at a burn address.`,
       detail: "Burned LP cannot be withdrawn. This is a lifetime lock tier.",
       grade: "A",
       status: "pass",
@@ -503,7 +509,7 @@ function classifyEvm(input: LpObservation): LpAssessment {
       unlockAt,
       lockerName,
       poolType,
-      summary: `⏳ TIMED — ${timedPct.toFixed(0)}% in ${lockerName ?? "a known locker"}${
+      summary: `⏳ TIMED — ${formatPct(timedPct)} in ${lockerName ?? "a known locker"}${
         unlockAt ? `; unlock ${unlockAt.slice(0, 10)}` : ""
       }.`,
       detail: short

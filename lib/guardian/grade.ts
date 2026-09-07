@@ -40,31 +40,61 @@ export function minGrade(a: Grade, b: Grade): Grade {
   return GRADE_ORDER.indexOf(a) >= GRADE_ORDER.indexOf(b) ? a : b;
 }
 
-export function daysAgo(timestamp: number | null | undefined): number | null {
-  if (!timestamp) return null;
-  const ms = timestamp < 10_000_000_000 ? timestamp * 1000 : timestamp;
+/** Coerce unknown numeric-ish values; null if not finite. */
+export function asFiniteNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "boolean") return null;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Safe toFixed — never throws on string/null/NaN. */
+export function safeToFixed(value: unknown, digits: number): string | null {
+  const n = asFiniteNumber(value);
+  if (n === null) return null;
+  return n.toFixed(digits);
+}
+
+export function daysAgo(timestamp: number | null | undefined | string): number | null {
+  const msRaw = asFiniteNumber(timestamp);
+  if (msRaw === null || msRaw <= 0) return null;
+  const ms = msRaw < 10_000_000_000 ? msRaw * 1000 : msRaw;
   return Math.max(0, (Date.now() - ms) / 86_400_000);
 }
 
-export function formatAge(timestamp: number | null | undefined): string {
+export function formatAge(timestamp: number | null | undefined | string): string {
   const days = daysAgo(timestamp);
   if (days === null) return "unknown age";
   if (days < 1) return `${Math.max(1, Math.round(days * 24))} hours`;
   if (days < 45) return `${Math.round(days)} days`;
-  if (days < 365) return `${(days / 30).toFixed(1)} months`;
-  return `${(days / 365).toFixed(1)} years`;
+  if (days < 365) {
+    const m = safeToFixed(days / 30, 1);
+    return m ? `${m} months` : "unknown age";
+  }
+  const y = safeToFixed(days / 365, 1);
+  return y ? `${y} years` : "unknown age";
 }
 
-export function formatPct(value: number | null | undefined): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return "n/a";
-  return `${value.toFixed(value >= 10 ? 0 : 1)}%`;
+export function formatPct(value: unknown): string {
+  const n = asFiniteNumber(value);
+  if (n === null) return "—";
+  const fixed = safeToFixed(n, n >= 10 || n <= -10 ? 0 : 1);
+  return fixed ? `${fixed}%` : "—";
 }
 
-export function formatUsd(value: number | null | undefined): string {
-  if (value === null || value === undefined) return "n/a";
-  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}k`;
-  return `$${value.toFixed(0)}`;
+export function formatUsd(value: unknown): string {
+  const n = asFiniteNumber(value);
+  if (n === null) return "—";
+  if (Math.abs(n) >= 1_000_000) {
+    const fixed = safeToFixed(n / 1_000_000, 1);
+    return fixed ? `$${fixed}M` : "—";
+  }
+  if (Math.abs(n) >= 1_000) {
+    const fixed = safeToFixed(n / 1_000, 1);
+    return fixed ? `$${fixed}k` : "—";
+  }
+  const fixed = safeToFixed(n, 0);
+  return fixed ? `$${fixed}` : "—";
 }
 
 export function shorten(address: string, size = 4) {

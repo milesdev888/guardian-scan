@@ -19,6 +19,7 @@ import {
   daysAgo,
   formatAge,
   formatPct,
+  safeToFixed,
   formatUsd,
   pattern,
 } from "@/lib/guardian/grade";
@@ -291,7 +292,7 @@ export class XRPLAdapter implements ChainAdapter {
             title: "Transfer tax",
             status: "flag",
             grade: taxPct >= 5 ? "D" : "C",
-            summary: `Issuer TransferRate is ${taxPct < 0.1 ? `${taxPct.toFixed(3)}%` : formatPct(taxPct)}.`,
+            summary: `Issuer TransferRate is ${taxPct < 0.1 ? `${safeToFixed(taxPct, 3) ?? "—"}%` : formatPct(taxPct)}.`,
             detail:
               "XRPL TransferRate is charged when issued tokens are transferred between customers. 1,000,000,000 = 0%. This is the protocol equivalent of an EVM transfer tax.",
             evidence: { transferRate: account.TransferRate ?? null, percent: taxPct },
@@ -303,7 +304,7 @@ export class XRPLAdapter implements ChainAdapter {
             grade: "A",
             summary:
               taxPct > 0
-                ? `TransferRate is ${taxPct.toFixed(3)}% — treated as dust, not a tax.`
+                ? `TransferRate is ${safeToFixed(taxPct, 3) ?? "—"}% — treated as dust, not a tax.`
                 : "TransferRate is 0% (unset or 1,000,000,000).",
             detail: "No meaningful issuer transfer fee on this AccountRoot.",
             evidence: { transferRate: account.TransferRate ?? null, percent: taxPct },
@@ -373,7 +374,7 @@ export class XRPLAdapter implements ChainAdapter {
       dated.sort((a, b) => Date.parse(a) - Date.parse(b));
       lpEscrowUnlock = dated[0] ?? null;
       lpFacts = `AMM ${amm.amm.account}; LP supply ${amm.amm.lpValue ?? "n/a"}; ${lpHolders.length} LP trust lines sampled; burned-at-blackhole ${
-        lpBurnedPct === null ? "n/a" : `${lpBurnedPct.toFixed(1)}%`
+        lpBurnedPct === null ? "n/a" : `${safeToFixed(lpBurnedPct, 1) ?? "—"}%`
       }.`;
     }
 
