@@ -1,1 +1,1 @@
-PLACEHOLDER_WILL_REPLACE
+{{FILE:/tmp/mcp_file_0_content.ts}}
