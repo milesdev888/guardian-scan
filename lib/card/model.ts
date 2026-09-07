@@ -4,6 +4,7 @@
  */
 
 import { asFiniteNumber, safeToFixed } from "@/lib/guardian/grade";
+import { GRADE_HEX } from "@/lib/guardian/grade-colors";
 import type { Grade, GuardianReport } from "@/lib/guardian/types";
 import {
   mapShareCardChips,
@@ -15,14 +16,8 @@ import { buildLpLine, type LpLine } from "@/lib/card/lp-line";
 export const CARD_FOOTER =
   "Guardian reports grades and on-chain patterns, not a verdict.";
 
-export const GRADE_COLORS: Record<Exclude<Grade, "U"> | "U", string> = {
-  A: "#E8C56A",
-  B: "#5FD0FF",
-  C: "#9AA4B2",
-  D: "#E09A3C",
-  F: "#E09A3C",
-  U: "#9AA4B2",
-};
+/** @deprecated Prefer GRADE_HEX from grade-colors — kept for share-card imports. */
+export const GRADE_COLORS = GRADE_HEX;
 
 export type ShareCardModel = {
   mint: string;
