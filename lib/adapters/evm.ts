@@ -328,7 +328,7 @@ export class EvmAdapter implements ChainAdapter {
             title: "Honeypot simulation",
             status: "flag",
             grade: "F",
-            summary: "Buy\u2192sell simulation failed or is flagged as a honeypot.",
+            summary: "Buy→sell simulation failed or is flagged as a honeypot.",
             detail:
               honeypot?.honeypotReason ??
               "The simulated buy could not be unwound with a sell. This is a pattern, not a legal finding.",
@@ -342,7 +342,7 @@ export class EvmAdapter implements ChainAdapter {
               grade: "A",
               summary: "Simulated buy then sell did not revert.",
               detail: honeypot
-                ? `Honeypot.is simulated a buy\u2192sell on ${evm.name}. Gas buy ${honeypot.buyGas ?? "n/a"}, sell ${honeypot.sellGas ?? "n/a"}.`
+                ? `Honeypot.is simulated a buy→sell on ${evm.name}. Gas buy ${honeypot.buyGas ?? "n/a"}, sell ${honeypot.sellGas ?? "n/a"}.`
                 : "GoPlus does not flag this token as a honeypot. That is not a guarantee of sellability under every wallet.",
             })
           : check({
@@ -350,7 +350,7 @@ export class EvmAdapter implements ChainAdapter {
               title: "Honeypot simulation",
               status: "unavailable",
               grade: "U",
-              summary: `No buy\u2192sell simulator for ${evm.name} yet.`,
+              summary: `No buy→sell simulator for ${evm.name} yet.`,
               detail: "Honeypot.is currently covers Ethereum and Base. Arbitrum and Robinhood Chain fall back to GoPlus flags and selector scans.",
             }),
     );
@@ -407,9 +407,9 @@ export class EvmAdapter implements ChainAdapter {
                 title: "LP lock / burn",
                 status: "pass",
                 grade: "B",
-                summary: `Distributed liquidity \u00b7 ${poolStats.poolCount} independent pools \u00b7 ${formatUsd(poolStats.totalLiquidityUsd)} depth.`,
+                summary: `Distributed liquidity · ${poolStats.poolCount} independent pools · ${formatUsd(poolStats.totalLiquidityUsd)} depth.`,
                 detail:
-                  "Deep multi-pool books with no single-pool majority \u2014 protocol-depth liquidity across independent venues, not the same risk shape as a young token with one thin pool.",
+                  "Deep multi-pool books with no single-pool majority — protocol-depth liquidity across independent venues, not the same risk shape as a young token with one thin pool.",
                 evidence: {
                   lockedPct,
                   burnedPct,
