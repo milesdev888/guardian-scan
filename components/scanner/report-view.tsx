@@ -13,7 +13,8 @@ import { Separator } from "@/components/ui/separator";
 import { GradeMark } from "@/components/scanner/grade-mark";
 import { BadgeSealCorner } from "@/components/scanner/badge-seal";
 import { buttonVariants } from "@/components/ui/button";
-import { formatAge, formatPct, formatUsd, shorten } from "@/lib/guardian/grade";
+import { formatAge, formatPct, formatProvenYears, formatUsd, readAgeDays, shorten } from "@/lib/guardian/grade";
+import { GRADE_HEX } from "@/lib/guardian/grade-colors";
 import type {
   Check,
   GuardianReport,
@@ -44,7 +45,7 @@ function lockToneFromTier(tier: LpTier | null | undefined, grade: Check["grade"]
   if (tier === "PERMANENT" || tier === "BURNED") return "green";
   if (tier === "TIMED") return "gold";
   if (tier === "UNVERIFIED") return grade === "U" ? "gray" : "red";
-  if (grade === "A") return "green";
+  if (grade === "AA" || grade === "A") return "green";
   if (grade === "B") return "gold";
   if (grade === "U") return "gray";
   return "red";
@@ -158,6 +159,9 @@ function CheckCard({ item, lpTier }: { item: Check; lpTier?: LpTier | null }) {
 export function ReportView({ report }: { report: GuardianReport }) {
   const concentration = report.concentration;
   const lpTier = report.lp?.tier ?? null;
+  const ageDays = readAgeDays(report.checks);
+  const provenYears = report.grade === "AA" ? formatProvenYears(ageDays) : null;
+  const gradeAccent = GRADE_HEX[report.grade] ?? GRADE_HEX.U;
 
   return (
     <div className="relative space-y-6 pb-16">
@@ -180,10 +184,18 @@ export function ReportView({ report }: { report: GuardianReport }) {
                   <span className="text-muted-foreground">${report.token.symbol}</span>
                 ) : null}
               </CardTitle>
-              <p className="mt-1 text-sm">
+              <p className="mt-1 text-sm" style={{ color: gradeAccent }}>
                 Grade {report.grade}
                 <span className="text-muted-foreground"> · composite {report.score}/100</span>
               </p>
+              {provenYears ? (
+                <p
+                  className="mt-1 text-xs font-medium tracking-[0.14em] uppercase"
+                  style={{ color: GRADE_HEX.AA }}
+                >
+                  Proven · {provenYears} yrs on-chain
+                </p>
+              ) : null}
               {lpTier ? (
                 <p
                   className={cn(
@@ -198,7 +210,7 @@ export function ReportView({ report }: { report: GuardianReport }) {
                   )}
                   LP {lpTier}
                   {typeof report.lp?.lockedPct === "number"
-                    ? ` · ${Math.round(report.lp.lockedPct)}% secured`
+                    ? ` · ${Math.round(report.lp.lockedPct)}% locked`
                     : null}
                 </p>
               ) : null}
