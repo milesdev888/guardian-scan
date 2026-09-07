@@ -1,9 +1,12 @@
+import { formatPct } from "@/lib/guardian/grade";
 import { SolanaAdapter } from "@/lib/adapters/solana";
 import { SOLANA } from "@/lib/chains/config";
 
 const C7 = "979sitxCjWFPdAsrF2ybKNENwFcpiHDwaAasC5Xa5qww";
 const GOOD = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const RUG = process.env.KNOWN_RUG_MINT ?? "7EYnhQoR9YM3N7UoaKRoA44Uy8JeaZV3qyouov87awMs";
+/** Token-2022 fee_rate arrived as string — crashed formatPct/.toFixed (digest 2986159048). */
+const ZES_TOFIXED = "ZesMGYmokFiEuDvNzWeMhB7jxF6eUW8c512vwSKSTNK";
 
 const adapter = new SolanaAdapter();
 const pick = (r: Awaited<ReturnType<SolanaAdapter["scan"]>>, id: string) =>
@@ -18,7 +21,7 @@ async function run(label: string, mint: string) {
   console.log("holders", pick(report, "holder_concentration")?.summary);
   console.log(
     "tags",
-    report.holders.map((h) => `${h.tag ?? "wallet"}:${(h.percent ?? 0).toFixed(1)}%`).join(" | "),
+    report.holders.map((h) => `${h.tag ?? "wallet"}:${formatPct(h.percent)}`).join(" | "),
   );
   console.log("deployer", pick(report, "deployer_age")?.summary);
   console.log("copycats", pick(report, "copycats")?.summary, "n=", report.copycats.length);
@@ -39,6 +42,8 @@ async function main() {
   if (c7.copycats.length < 6) console.warn("WARN copycats", c7.copycats.length);
   await run("GOOD_USDC", GOOD);
   await run("RUG_CONTROL", RUG);
+  // Must not throw TypeError on string/null numerics in formatters
+  await run("ZES_TOFIXED_REGRESSION", ZES_TOFIXED);
   console.log(failed ? "\nFAILED" : "\nOK");
   process.exit(failed ? 1 : 0);
 }
