@@ -1,6 +1,6 @@
 import { DISCLAIMER, type Check, type EvmChainConfig, type GuardianReport, type Holder, type LiquidityPool, type Pattern, type PresenceMatch, type SourceStatus } from "@/lib/guardian/types";
 import { findCopycats } from "@/lib/guardian/copycats";
-import { check, compileReportMeta, daysAgo, formatAge, formatPct, formatUsd, pattern } from "@/lib/guardian/grade";
+import { applyAaIfEligible, check, compileReportMeta, daysAgo, formatAge, formatPct, formatUsd, pattern } from "@/lib/guardian/grade";
 import { isEvmAddress } from "@/lib/chains/detect";
 import { fetchDexToken, filterPairsForChain, identityFromPairs, pickCanonicalPair } from "@/lib/sources/dexscreener";
 import { fetchExplorerCreation, fetchExplorerSource, fetchFirstTransactionTime } from "@/lib/sources/explorer";
@@ -440,6 +440,7 @@ export class EvmAdapter implements ChainAdapter {
             grade: "U",
             summary: "Creation time was not available.",
             detail: "Explorer creation API and DexScreener pairCreatedAt both missed.",
+            evidence: { ageDays: null, createdAt },
           })
         : ageDays < 2
           ? check({
@@ -449,7 +450,7 @@ export class EvmAdapter implements ChainAdapter {
               grade: "D",
               summary: `Contract is ${formatAge(createdAt)} old.`,
               detail: "Brand-new contracts are where most copycat launches cluster. Age is a pattern, not proof of intent.",
-              evidence: { createdAt },
+              evidence: { ageDays, createdAt },
             })
           : check({
               id: "contract_age",
@@ -458,7 +459,7 @@ export class EvmAdapter implements ChainAdapter {
               grade: ageDays < 30 ? "B" : "A",
               summary: `Contract is ${formatAge(createdAt)} old.`,
               detail: deployer ? `Deployer ${deployer}.` : "Deployer not listed.",
-              evidence: { createdAt, deployer },
+              evidence: { ageDays, createdAt, deployer },
             }),
     );
 
@@ -554,7 +555,16 @@ export class EvmAdapter implements ChainAdapter {
       );
     }
 
-    const { grade, score, headline, patterns } = compileReportMeta(checks, extraPatterns);
+    const { grade: baseGrade, score, headline, patterns } = compileReportMeta(
+      checks,
+      extraPatterns,
+    );
+    const { grade } = applyAaIfEligible(score, baseGrade, {
+      checks,
+      pools,
+      lp: null,
+      patterns,
+    });
 
     return {
       schema: "guardian.report.v2",

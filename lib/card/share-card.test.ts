@@ -1,271 +1,485 @@
+/**
+ * Share-card unit tests:
+ * (1) card text matches stored record character-by-character
+ * (2) A badged / C unbadged / 2+ risk chips / Established / REVOKED
+ * (3) Zes mint fixture renders with "—" fields, no crash
+ */
+
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import test from "node:test";
-import { fileURLToPath } from "node:url";
-import { buildShareCardModel } from "./model";
-import { renderShareCardSvg } from "./render";
-import type { ScanReport } from "@/lib/guardian/types";
+import fs from "node:fs";
+import path from "node:path";
+import {
+  CHIP_VOCAB,
+  mapShareCardChips,
+  type BadgeCardStatus,
+} from "../card/chips";
+import { buildLpLine } from "../card/lp-line";
+import {
+  buildShareCardModel,
+  cardTextFingerprint,
+  CARD_FOOTER,
+} from "../card/model";
+import { renderShareCardPng } from "../card/render";
+import type { Check, GuardianReport, Grade } from "../guardian/types";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const fixturePath = join(__dirname, "../../fixtures/sample-report.json");
-
-function loadFixture(): ScanReport {
-  return JSON.parse(readFileSync(fixturePath, "utf8")) as ScanReport;
+function baseReport(partial: Partial<GuardianReport> & { token: GuardianReport["token"] }): GuardianReport {
+  return {
+    schema: "guardian.report.v2",
+    scannedAt: "2026-09-07T12:00:00.000Z",
+    chain: {
+      id: "solana",
+      name: "Solana",
+      family: "solana",
+      explorerUrl: `https://solscan.io/token/${partial.token.address}`,
+    },
+    grade: "C",
+    score: 55,
+    headline: "test",
+    disclaimer: "x",
+    patterns: [],
+    checks: [],
+    copycats: [],
+    pools: [],
+    holders: [],
+    sources: [],
+    ...partial,
+  };
 }
 
-test("share card model keeps fixture grade and score unchanged", () => {
-  const report = loadFixture();
-  const model = buildShareCardModel(report, {
-    scannedAt: "2026-03-22T12:00:00.000Z",
-    scanId: "fixture-scan",
+function check(
+  id: string,
+  grade: Grade,
+  status: Check["status"],
+  summary: string,
+  detail = "",
+): Check {
+  return { id, title: id, grade, status, summary, detail };
+}
+
+const C7_MINT = "979sitxCjWFPdAsrF2ybKNENwFcpiHDwaAasC5Xa5qww";
+const ZES_MINT = "ZesMGYmokFiEuDvNzWeMhB7jxF6eUW8c512vwSKSTNK";
+
+const badgeValidA: BadgeCardStatus = {
+  valid: true,
+  status: "VALID",
+  pathFamily: "secured",
+  pathLabel: "Lifetime",
+  qualifyPath: "lifetime",
+  serial: "GRD-2026-00001",
+};
+
+const badgeEstablished: BadgeCardStatus = {
+  valid: true,
+  status: "VALID",
+  pathFamily: "established",
+  pathLabel: "Established",
+  qualifyPath: "established",
+  serial: "GRD-2026-00099",
+};
+
+const badgeRevoked: BadgeCardStatus = {
+  valid: false,
+  status: "REVOKED",
+  pathFamily: "secured",
+  pathLabel: "Lifetime",
+  qualifyPath: "lifetime",
+  serial: "GRD-2026-00050",
+};
+
+async function main() {
+// ——— (1) character-by-character match to stored record ———
+{
+  const report = baseReport({
+    token: {
+      address: C7_MINT,
+      name: "CYRE",
+      symbol: "C7",
+      decimals: 6,
+      imageUrl: null,
+    },
+    grade: "A",
+    score: 91,
+    lp: {
+      tier: "PERMANENT",
+      lockedPct: 100,
+      burnedPct: 0,
+      freePct: 0,
+      unlockAt: null,
+      lockerName: null,
+      poolType: "meteora_damm_v2",
+      lifetimeEligible: true,
+      badgeEligible: true,
+    },
+    checks: [
+      check("owner_privileges", "A", "pass", "Mint and freeze authorities are revoked."),
+      check("lp_lock", "A", "pass", "🔒 PERMANENT — 100% locked."),
+      check("holder_concentration", "A", "pass", "Top 10 hold 18%."),
+      check("transfer_tax", "A", "pass", "Simulation shows 0% buy and sell tax."),
+      check("honeypot_simulation", "A", "pass", "No honeypot."),
+      check("contract_age", "A", "pass", "Seasoned."),
+      check("verified_source", "A", "pass", "OK"),
+      check("copycats", "A", "pass", "None"),
+    ],
   });
 
-  assert.equal(model.grade, report.grade);
-  assert.equal(model.score, report.score);
+  const model = buildShareCardModel(report, badgeValidA);
   assert.equal(model.tokenName, report.token.name);
-  assert.equal(model.tokenSymbol, report.token.symbol);
-  assert.equal(model.chain, report.token.chain);
-  assert.equal(model.headline, report.headline);
-  assert.ok(model.wordmarkDataUrl.startsWith("data:image/svg+xml"));
-  assert.ok(model.scannedAtLabel.length > 0);
-  assert.equal(model.gradeHex, "#3DDC97");
-});
+  assert.equal(model.ticker, `$${report.token.symbol}`);
+  assert.equal(model.mint, report.token.address);
+  assert.equal(model.chainName, report.chain.name);
+  assert.equal(model.gradeLine, `Grade ${report.grade} · composite ${report.score}/100`);
+  assert.equal(model.footer, CARD_FOOTER);
+  assert.equal(model.lp.text, "LP PERMANENT · 100% locked");
+  assert.equal(model.showMedallion, true);
 
-test("share card model uses AA grade hex for AA reports", () => {
-  const report = {
-    ...loadFixture(),
-    grade: "AA" as const,
-    score: 94,
-  };
-  const model = buildShareCardModel(report, {
-    scannedAt: "2026-03-22T12:00:00.000Z",
-    scanId: "fixture-scan-aa",
-  });
+  // Fingerprint strings must equal stored fields exactly (no URL param pollution)
+  const fp = cardTextFingerprint(model);
+  assert.ok(fp.includes(report.token.address));
+  assert.ok(fp.includes("CYRE"));
+  assert.ok(fp.includes("$C7"));
+  assert.ok(fp.every((s) => typeof s === "string" && !s.includes("undefined")));
+  assert.ok(!fp.some((s) => /NaN/.test(s)));
+}
 
-  assert.equal(model.grade, "AA");
-  assert.equal(model.gradeHex, "#E8E8E8");
-});
-
-test("share card SVG includes grade, score, and Cyre wordmark", () => {
-  const report = loadFixture();
-  const model = buildShareCardModel(report, {
-    scannedAt: "2026-03-22T12:00:00.000Z",
-    scanId: "fixture-scan",
-  });
-  const svg = renderShareCardSvg(model);
-
-  assert.match(svg, /<svg[\s\S]*<\/svg>/);
-  assert.match(svg, new RegExp(`>${model.grade}<`));
-  assert.match(svg, new RegExp(`${model.score}/100`));
-  assert.match(svg, /href="data:image\/svg\+xml/);
-  assert.match(svg, /Scanned/);
-  assert.match(svg, /CYRE SCAN/);
-  assert.match(svg, /guardian security report/);
-});
-
-test("share card SVG keeps grade lettering crisp (no blur/shadow filters)", () => {
-  const report = loadFixture();
-  const model = buildShareCardModel(report, {
-    scannedAt: "2026-03-22T12:00:00.000Z",
-    scanId: "fixture-scan",
-  });
-  const svg = renderShareCardSvg(model);
-
-  assert.doesNotMatch(svg, /filter=/);
-  assert.doesNotMatch(svg, /feGaussianBlur/);
-  assert.doesNotMatch(svg, /feDropShadow/);
-  assert.match(svg, /font-family="Inter, Arial, sans-serif"/);
-});
-
-test("share card SVG escapes unsafe token text", () => {
-  const report = {
-    ...loadFixture(),
+// ——— (2a) A badged token ———
+{
+  const report = baseReport({
     token: {
-      ...loadFixture().token,
-      name: `Alpha <script>alert(1)</script>`,
-      symbol: `A&B"C'`,
+      address: C7_MINT,
+      name: "CYRE",
+      symbol: "C7",
+      decimals: 6,
+      imageUrl: null,
     },
-    headline: `Risk "quoted" & <tagged>`,
-  };
-  const model = buildShareCardModel(report, {
-    scannedAt: "2026-03-22T12:00:00.000Z",
-    scanId: "escape-scan",
+    grade: "A",
+    score: 91,
+    lp: {
+      tier: "PERMANENT",
+      lockedPct: 100,
+      burnedPct: null,
+      freePct: null,
+      unlockAt: null,
+      lockerName: null,
+      poolType: "meteora_damm_v2",
+      lifetimeEligible: true,
+      badgeEligible: true,
+    },
+    checks: [
+      check("owner_privileges", "A", "pass", "Mint and freeze authorities are revoked."),
+      check("lp_lock", "A", "pass", "PERMANENT"),
+      check("holder_concentration", "A", "pass", "dispersed"),
+      check("transfer_tax", "A", "pass", "0% tax"),
+    ],
   });
-  const svg = renderShareCardSvg(model);
-
-  assert.doesNotMatch(svg, /<script>/);
-  assert.match(svg, /&lt;script&gt;/);
-  assert.match(svg, /&amp;/);
-  assert.match(svg, /&quot;/);
-});
-
-test("share card SVG truncates long names without breaking layout constants", () => {
-  const report = {
-    ...loadFixture(),
+  const model = buildShareCardModel(report, badgeValidA);
+  assert.equal(model.showMedallion, true);
+  assert.equal(model.gradeColor, "#E8C56A");
+  // AA platinum
+  const aaReport = baseReport({
     token: {
-      ...loadFixture().token,
-      name: "Supercalifragilisticexpialidocious Token Name That Should Truncate",
-      symbol: "LONGSYMBOLNAME",
+      address: C7_MINT,
+      name: "CYRE",
+      symbol: "C7",
+      decimals: 6,
+      imageUrl: null,
     },
-  };
-  const model = buildShareCardModel(report, {
-    scannedAt: "2026-03-22T12:00:00.000Z",
-    scanId: "truncate-scan",
+    grade: "AA",
+    score: 96,
+    checks: [
+      check("honeypot_simulation", "A", "pass", "ok"),
+      check("lp_lock", "A", "pass", "PERMANENT"),
+      check("holder_concentration", "A", "pass", "dispersed"),
+      check("owner_privileges", "A", "pass", "revoked"),
+      check("transfer_tax", "A", "pass", "0%"),
+      check("contract_age", "A", "pass", "aged"),
+      check("copycats", "A", "pass", "none"),
+    ],
+    lp: {
+      tier: "PERMANENT",
+      lockedPct: 100,
+      burnedPct: 0,
+      freePct: 0,
+      unlockAt: null,
+      lockerName: "Meteora",
+      poolType: "damm_v2",
+      lifetimeEligible: true,
+      badgeEligible: true,
+    },
   });
-  const svg = renderShareCardSvg(model);
+  const aaModel = buildShareCardModel(aaReport, badgeValidA);
+  assert.equal(aaModel.gradeColor, "#E5E4E2");
+  assert.equal(aaModel.gradeLine, "Grade AA · composite 96/100");
+  assert.ok(!aaModel.lp.text.toLowerCase().includes("secured"));
+  assert.ok(model.chips.some((c) => c.id === "GUARDIAN_VERIFIED"));
+  const png = await renderShareCardPng(model);
+  assert.ok(png.length > 5_000);
+  assert.equal(png[0], 0x89);
+  assert.equal(png[1], 0x50);
+}
 
-  assert.match(svg, /\.\.\./);
-  assert.match(svg, /viewBox="0 0 1200 630"/);
-});
-
-test("share card SVG includes optional icon when provided", () => {
-  const report = loadFixture();
-  const model = buildShareCardModel(report, {
-    scannedAt: "2026-03-22T12:00:00.000Z",
-    scanId: "icon-scan",
-    iconDataUrl: "data:image/png;base64,abc",
-  });
-  const svg = renderShareCardSvg(model);
-
-  assert.match(svg, /href="data:image\/png;base64,abc"/);
-  assert.match(svg, /clipPath/);
-});
-
-test("share card SVG falls back when icon is missing", () => {
-  const report = loadFixture();
-  const model = buildShareCardModel(report, {
-    scannedAt: "2026-03-22T12:00:00.000Z",
-    scanId: "no-icon-scan",
-  });
-  const svg = renderShareCardSvg(model);
-
-  assert.doesNotMatch(svg, /clipPath/);
-  assert.match(svg, />S</);
-});
-
-test("share card model prefers remote iconUrl and keeps it out of SVG when unsafe", () => {
-  const report = {
-    ...loadFixture(),
+// ——— (2b) C unbadged token ———
+{
+  const report = baseReport({
     token: {
-      ...loadFixture().token,
-      iconUrl: "https://cdn.example/token.png",
+      address: "So11111111111111111111111111111111111111112",
+      name: "Wrapped SOL",
+      symbol: "SOL",
+      decimals: 9,
+      imageUrl: null,
     },
-  };
-  const model = buildShareCardModel(report, {
-    scannedAt: "2026-03-22T12:00:00.000Z",
-    scanId: "remote-icon",
+    grade: "C",
+    score: 58,
+    lp: {
+      tier: "UNVERIFIED",
+      lockedPct: 40,
+      burnedPct: 0,
+      freePct: 60,
+      unlockAt: null,
+      lockerName: null,
+      poolType: "raydium",
+      lifetimeEligible: false,
+      badgeEligible: false,
+    },
+    checks: [
+      check("verified_source", "C", "flag", "Token metadata is still mutable."),
+      check("lp_lock", "C", "flag", "UNVERIFIED lock"),
+      check("contract_age", "C", "flag", "Token is 12 days old."),
+    ],
   });
+  const model = buildShareCardModel(report, null);
+  assert.equal(model.showMedallion, false);
+  assert.equal(model.gradeColor, "#9AA4B2");
+  assert.ok(model.lp.text.includes("UNVERIFIED") || model.lp.text === "LP UNLOCKED");
+  const png = await renderShareCardPng(model);
+  assert.ok(png.length > 5_000);
+}
 
-  assert.equal(model.iconUrl, "https://cdn.example/token.png");
-  const svg = renderShareCardSvg(model);
-  assert.doesNotMatch(svg, /cdn\.example/);
-});
-
-test("share card SVG prefers remote https iconUrl over data URL", () => {
-  const report = {
-    ...loadFixture(),
+// ——— (2c) token with 2+ risk chips ———
+{
+  const report = baseReport({
     token: {
-      ...loadFixture().token,
-      iconUrl: "https://cdn.example/token.png",
+      address: "RiskMint11111111111111111111111111111111111",
+      name: "Risk Token",
+      symbol: "RISK",
+      decimals: 6,
+      imageUrl: null,
     },
-  };
-  const model = buildShareCardModel(report, {
-    scannedAt: "2026-03-22T12:00:00.000Z",
-    scanId: "remote-icon-svg",
-    iconDataUrl: "data:image/png;base64,abc",
+    grade: "F",
+    score: 12,
+    patterns: [
+      {
+        id: "copycats",
+        severity: "watch",
+        title: "Same ticker",
+        detail: "many copies",
+      },
+    ],
+    checks: [
+      check("honeypot_simulation", "F", "flag", "Likely honeypot / sell-trap."),
+      check("owner_privileges", "F", "flag", "Mint authority is still live."),
+      check("transfer_tax", "D", "flag", "High transfer tax 25%."),
+      check("copycats", "C", "flag", "20 other copies"),
+      check("lp_lock", "F", "flag", "LP unlocked"),
+    ],
   });
-  const svg = renderShareCardSvg(model);
+  const chips = mapShareCardChips(report, null);
+  assert.ok(chips.length >= 2, `expected ≥2 risk chips, got ${chips.map((c) => c.id)}`);
+  assert.ok(chips.filter((c) => c.kind === "risk" || c.kind === "fraud").length >= 2);
+  // Risk precedes positive
+  const firstPositive = chips.findIndex((c) => c.kind === "positive");
+  const lastRisk = Math.max(
+    -1,
+    ...chips.map((c, i) => (c.kind !== "positive" ? i : -1)),
+  );
+  if (firstPositive >= 0) assert.ok(lastRisk < firstPositive);
+  const model = buildShareCardModel(report, null);
+  assert.equal(model.gradeColor, "#E09A3C"); // D/F amber — not red
+  const png = await renderShareCardPng(model);
+  assert.ok(png.length > 5_000);
+}
 
-  assert.match(svg, /href="https:\/\/cdn\.example\/token\.png"/);
-  assert.doesNotMatch(svg, /data:image\/png;base64,abc/);
-});
-
-test("share card SVG rejects non-https remote iconUrl", () => {
-  const report = {
-    ...loadFixture(),
+// ——— (2d) Established token ———
+{
+  const report = baseReport({
     token: {
-      ...loadFixture().token,
-      iconUrl: "http://cdn.example/token.png",
+      address: "EstablishedMint111111111111111111111111111",
+      name: "Battle Tested",
+      symbol: "BTTL",
+      decimals: 6,
+      imageUrl: null,
     },
-  };
-  const model = buildShareCardModel(report, {
-    scannedAt: "2026-03-22T12:00:00.000Z",
-    scanId: "insecure-icon",
-    iconDataUrl: "data:image/png;base64,abc",
+    grade: "B",
+    score: 78,
+    pools: [
+      {
+        dex: "raydium",
+        pairAddress: "a",
+        quote: "SOL",
+        liquidityUsd: 50_000,
+        createdAt: 1,
+        url: null,
+      },
+      {
+        dex: "orca",
+        pairAddress: "b",
+        quote: "USDC",
+        liquidityUsd: 40_000,
+        createdAt: 1,
+        url: null,
+      },
+      {
+        dex: "meteora",
+        pairAddress: "c",
+        quote: "SOL",
+        liquidityUsd: 30_000,
+        createdAt: 1,
+        url: null,
+      },
+    ],
+    lp: {
+      tier: "UNVERIFIED",
+      lockedPct: 0,
+      burnedPct: 0,
+      freePct: 100,
+      unlockAt: null,
+      lockerName: null,
+      poolType: "amm",
+      lifetimeEligible: false,
+      badgeEligible: true,
+    },
+    checks: [check("lp_lock", "C", "flag", "Unlocked AMM on established token")],
   });
-  const svg = renderShareCardSvg(model);
+  const lp = buildLpLine(report, badgeEstablished);
+  assert.equal(lp.text, "LIQUIDITY DISTRIBUTED · 3 independent pools");
+  assert.doesNotMatch(lp.text, /unlocked/i);
+  const model = buildShareCardModel(report, badgeEstablished);
+  assert.ok(model.chips.some((c) => c.id === "ESTABLISHED"));
+  assert.equal(model.showMedallion, true);
+  const png = await renderShareCardPng(model);
+  assert.ok(png.length > 5_000);
+}
 
-  assert.doesNotMatch(svg, /cdn\.example/);
-  assert.match(svg, /href="data:image\/png;base64,abc"/);
-});
-
-test("share card SVG keeps status pills inside the safe content column", () => {
-  const report = loadFixture();
-  const model = buildShareCardModel(report, {
-    scannedAt: "2026-03-22T12:00:00.000Z",
-    scanId: "pill-layout",
+// ——— (2e) REVOKED badge ———
+{
+  const report = baseReport({
+    token: {
+      address: "RevokedMint111111111111111111111111111111",
+      name: "Was Good",
+      symbol: "WAS",
+      decimals: 6,
+      imageUrl: null,
+    },
+    grade: "B",
+    score: 70,
+    lp: {
+      tier: "TIMED",
+      lockedPct: 100,
+      burnedPct: 0,
+      freePct: 0,
+      unlockAt: "2026-01-01T00:00:00.000Z",
+      lockerName: "Streamflow",
+      poolType: "raydium",
+      lifetimeEligible: false,
+      badgeEligible: false,
+    },
+    checks: [check("lp_lock", "B", "pass", "Timed lock")],
   });
-  const svg = renderShareCardSvg(model);
+  const model = buildShareCardModel(report, badgeRevoked);
+  assert.equal(model.showMedallion, false, "REVOKED must not show medallion");
+  assert.ok(model.chips.some((c) => c.id === "REVOKED"));
+  assert.equal(model.chips.find((c) => c.id === "REVOKED")?.kind, "fraud");
+  assert.equal(model.lp.text, "LP LOCKED · until 2026-01-01");
+  const png = await renderShareCardPng(model);
+  assert.ok(png.length > 5_000);
+}
 
-  const mintX = Number(/>(Mint (?:revoked|active))<\/text>/.exec(svg)?.index != null
-    ? /x="(\d+)"[^>]*>Mint /.exec(svg)?.[1]
-    : undefined);
-  // Soft layout assertion: mint pill label should render in the left content column.
-  assert.ok(svg.includes("Mint "));
-  assert.ok(svg.includes("Freeze "));
-  assert.ok(svg.includes("% locked"));
-  assert.ok(!svg.includes("% secured"));
-  void mintX;
-});
+// ——— (3) Zes mint — missing numerics → "—", no crash ———
+{
+  let zes: GuardianReport | null = null;
+  const fixturePath = path.join(process.cwd(), "lib/card/fixtures/zes-report.json");
+  if (fs.existsSync(fixturePath)) {
+    zes = JSON.parse(fs.readFileSync(fixturePath, "utf8")) as GuardianReport;
+  } else {
+    // Synthetic stand-in with null liquidity / odd stringy fields
+    zes = baseReport({
+      token: {
+        address: ZES_MINT,
+        name: "Just a Backpack",
+        symbol: "🎒",
+        decimals: null,
+        imageUrl: null,
+      },
+      grade: "B",
+      score: 73,
+      lp: {
+        tier: "UNVERIFIED",
+        lockedPct: null as unknown as number,
+        burnedPct: null,
+        freePct: null,
+        unlockAt: null,
+        lockerName: null,
+        poolType: "raydium_cpmm",
+        lifetimeEligible: false,
+        badgeEligible: false,
+      },
+      pools: [
+        {
+          dex: "raydium",
+          pairAddress: "x",
+          quote: "SOL",
+          liquidityUsd: null,
+          createdAt: null,
+          url: null,
+        },
+      ],
+      checks: [
+        check("transfer_tax", "C", "flag", "Token-2022 transfer fee ≈ 0.0%."),
+        check("lp_lock", "C", "flag", "UNVERIFIED"),
+        check("verified_source", "C", "flag", "Token metadata is still mutable."),
+        check("copycats", "C", "flag", "20 other 🎒 mint(s)"),
+        check("contract_age", "D", "flag", "First pool is 6 hours old."),
+      ],
+      patterns: [
+        {
+          id: "copycats",
+          severity: "watch",
+          title: "Same ticker (🎒) on Solana",
+          detail: "copies",
+        },
+      ],
+    });
+  }
 
-test("share card SVG draws the grade inside an ornate circular seal", () => {
-  const report = loadFixture();
-  const model = buildShareCardModel(report, {
-    scannedAt: "2026-03-22T12:00:00.000Z",
-    scanId: "seal-layout",
-  });
-  const svg = renderShareCardSvg(model);
+  const model = buildShareCardModel(zes!, null);
+  assert.equal(model.mint, ZES_MINT);
+  assert.ok(!cardTextFingerprint(model).some((s) => /NaN/.test(s)));
+  // lockedPct null → em dash in unverified line
+  assert.match(model.lp.text, /—|UNVERIFIED|UNLOCKED/);
+  const png = await renderShareCardPng(model);
+  assert.ok(png.length > 5_000, "Zes card must render without throw");
 
-  assert.match(svg, /<circle cx="984" cy="292" r="118"/);
-  assert.match(svg, /stroke-dasharray="2\.2 7\.5"/);
-  assert.match(svg, /GUARDIAN GRADE/);
-  assert.match(svg, /textPath/);
-  assert.match(svg, /CYRE/);
-  assert.match(svg, /ESTABLISHED/);
-  assert.match(svg, /SECURITY/);
-  assert.doesNotMatch(svg, />SCANNED</);
-  assert.doesNotMatch(svg, /A · ESTABLISHED/);
-  assert.match(svg, /font-size="92"/);
-});
+  // Explicit missing score → —
+  const broken = buildShareCardModel(
+    { ...zes!, score: Number.NaN as unknown as number },
+    null,
+  );
+  assert.equal(broken.scoreDisplay, "—");
+  assert.equal(broken.gradeLine, `Grade ${zes!.grade} · composite —/100`);
+  await renderShareCardPng(broken);
+}
 
-test("share card SVG keeps status copy on one baseline with middot separators", () => {
-  const report = loadFixture();
-  const model = buildShareCardModel(report, {
-    scannedAt: "2026-03-22T12:00:00.000Z",
-    scanId: "status-baseline",
-  });
-  const svg = renderShareCardSvg(model);
+// Chip vocabulary is closed
+{
+  for (const chip of Object.values(CHIP_VOCAB)) {
+    assert.ok(chip.label.length > 0);
+    assert.ok(["risk", "positive", "fraud"].includes(chip.kind));
+  }
+}
 
-  assert.match(svg, /Mint revoked · Freeze revoked · \d+% locked/);
-  assert.doesNotMatch(svg, /<rect[^>]*rx="16"[^>]*fill="rgba\(255,255,255,0\.04\)"/);
-  assert.doesNotMatch(svg, /% secured/);
-});
+console.log("share-card tests: ok");
+}
 
-test("AA share card seal uses platinum pathWord instead of ESTABLISHED", () => {
-  const report = {
-    ...loadFixture(),
-    grade: "AA" as const,
-    score: 94,
-  };
-  const model = buildShareCardModel(report, {
-    scannedAt: "2026-03-22T12:00:00.000Z",
-    scanId: "aa-seal",
-  });
-  const svg = renderShareCardSvg(model);
-
-  assert.equal(model.grade, "AA");
-  assert.match(svg, /PLATINUM/);
-  assert.doesNotMatch(svg, /ESTABLISHED/);
-  assert.match(svg, />AA</);
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
 });

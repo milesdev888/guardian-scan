@@ -13,6 +13,7 @@ import { DISCLAIMER } from "@/lib/guardian/types";
 import { isSolanaAddress } from "@/lib/chains/detect";
 import { findCopycats } from "@/lib/guardian/copycats";
 import {
+  applyAaIfEligible,
   check,
   compileReportMeta,
   daysAgo,
@@ -470,6 +471,7 @@ export class SolanaAdapter implements ChainAdapter {
             grade: "U",
             summary: "Mint creation time was not available.",
             detail: "DexScreener pairCreatedAt is the Solana age proxy in v2.",
+            evidence: { ageDays: null, createdAt },
           })
         : ageDays < 2
           ? check({
@@ -479,6 +481,7 @@ export class SolanaAdapter implements ChainAdapter {
               grade: "D",
               summary: `First pool is ${formatAge(createdAt)} old.`,
               detail: "New Solana mints are where copycat tickers cluster.",
+              evidence: { ageDays, createdAt },
             })
           : check({
               id: "contract_age",
@@ -487,6 +490,7 @@ export class SolanaAdapter implements ChainAdapter {
               grade: ageDays < 30 ? "B" : "A",
               summary: `First pool is ${formatAge(createdAt)} old.`,
               detail: "Age from first listed pool / detection timestamp.",
+              evidence: { ageDays, createdAt },
             }),
     );
 
@@ -575,7 +579,17 @@ export class SolanaAdapter implements ChainAdapter {
       );
     }
 
-    const { grade, score, headline, patterns } = compileReportMeta(checks, extraPatterns);
+    const { grade: baseGrade, score, headline, patterns } = compileReportMeta(
+      checks,
+      extraPatterns,
+    );
+    const lp = toLpLockInfo(lpAssessment);
+    const { grade } = applyAaIfEligible(score, baseGrade, {
+      checks,
+      pools,
+      lp,
+      patterns,
+    });
 
     return {
       schema: "guardian.report.v2",
@@ -603,7 +617,7 @@ export class SolanaAdapter implements ChainAdapter {
       pools,
       holders,
       sources,
-      lp: toLpLockInfo(lpAssessment),
+      lp,
       concentration,
     };
   }

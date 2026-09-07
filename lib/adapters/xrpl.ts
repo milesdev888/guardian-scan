@@ -14,6 +14,7 @@ import { DISCLAIMER } from "@/lib/guardian/types";
 import { isXrplAddress, xrplTokenId } from "@/lib/chains/detect";
 import { findCopycats } from "@/lib/guardian/copycats";
 import {
+  applyAaIfEligible,
   check,
   compileReportMeta,
   daysAgo,
@@ -444,6 +445,7 @@ export class XRPLAdapter implements ChainAdapter {
               ? "No DexScreener pair timestamp for this issuance."
               : "XRPL accounts do not have an EVM-style creation block in this adapter.",
             detail: "Pair created-at is the age proxy when DexScreener lists an XRPL pool.",
+            evidence: { ageDays: null, createdAt },
           })
         : ageDays < 2
           ? check({
@@ -453,6 +455,7 @@ export class XRPLAdapter implements ChainAdapter {
               grade: "D",
               summary: `First listed pool is ${formatAge(createdAt)} old.`,
               detail: "New issuances are where copycat tickers cluster.",
+              evidence: { ageDays, createdAt },
             })
           : check({
               id: "contract_age",
@@ -461,6 +464,7 @@ export class XRPLAdapter implements ChainAdapter {
               grade: ageDays < 30 ? "B" : "A",
               summary: `First listed pool is ${formatAge(createdAt)} old.`,
               detail: `Issuer ${address}.`,
+              evidence: { ageDays, createdAt },
             }),
     );
 
@@ -555,7 +559,17 @@ export class XRPLAdapter implements ChainAdapter {
       });
     }
 
-    const { grade, score, headline, patterns } = compileReportMeta(checks, extraPatterns);
+    const { grade: baseGrade, score, headline, patterns } = compileReportMeta(
+      checks,
+      extraPatterns,
+    );
+    const lp = toLpLockInfo(lpAssessment);
+    const { grade } = applyAaIfEligible(score, baseGrade, {
+      checks,
+      pools,
+      lp,
+      patterns,
+    });
     const tokenAddress = scanningToken
       ? xrplTokenId(address, displayCurrency)
       : address;
@@ -587,7 +601,7 @@ export class XRPLAdapter implements ChainAdapter {
       pools,
       holders,
       sources,
-      lp: toLpLockInfo(lpAssessment),
+      lp,
     };
   }
 }

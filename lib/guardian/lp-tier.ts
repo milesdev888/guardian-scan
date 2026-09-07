@@ -312,7 +312,7 @@ function classifySolana(input: LpObservation): LpAssessment {
   const poolType = top?.marketType ?? null;
   const lockerName = timedLocker?.name ?? timedLocker?.type ?? top?.lockerName ?? null;
   const lpMintBurned = isSolanaBurn(top?.lpMint);
-  const secured = (lockedPct ?? 0) + burnedPct;
+  const lockedSum = (lockedPct ?? 0) + burnedPct;
   const established = (input.tokenAgeDays ?? 0) >= 90;
 
   if (!top && !lockers.length) {
@@ -348,7 +348,7 @@ function classifySolana(input: LpObservation): LpAssessment {
       tier: "BURNED",
       lockedPct,
       burnedPct,
-      freePct: clampPct(100 - secured),
+      freePct: clampPct(100 - lockedSum),
       unlockAt: null,
       lockerName: lockerName,
       poolType,
