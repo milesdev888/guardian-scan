@@ -13,6 +13,7 @@
  */
 
 import type { Check, GuardianReport, Pattern } from "@/lib/guardian/types";
+import { isDistributedLiquidity } from "@/lib/guardian/grade";
 
 export type ChipKind = "risk" | "positive" | "fraud";
 
@@ -62,6 +63,11 @@ export const CHIP_VOCAB = {
   FRAUD_FLAG: { id: "FRAUD_FLAG", label: "FRAUD FLAG", kind: "fraud" },
   REVOKED: { id: "REVOKED", label: "REVOKED", kind: "fraud" },
   LP_PERMANENT: { id: "LP_PERMANENT", label: "LP PERMANENT", kind: "positive" },
+  DISTRIBUTED_LIQUIDITY: {
+    id: "DISTRIBUTED_LIQUIDITY",
+    label: "DISTRIBUTED LIQUIDITY",
+    kind: "positive",
+  },
   AUTHORITIES_REVOKED: {
     id: "AUTHORITIES_REVOKED",
     label: "AUTHORITIES REVOKED",
@@ -106,6 +112,7 @@ const RISK_ORDER: ChipId[] = [
 const POSITIVE_ORDER: ChipId[] = [
   "GUARDIAN_VERIFIED",
   "ESTABLISHED",
+  "DISTRIBUTED_LIQUIDITY",
   "LP_PERMANENT",
   "AUTHORITIES_REVOKED",
   "DISPERSED_HOLDERS",
@@ -226,8 +233,14 @@ export function mapShareCardChips(
   }
 
   const tier = report.lp?.tier ?? null;
+  const distributed =
+    isDistributedLiquidity(report.pools) ||
+    checkById(checks, "lp_lock")?.evidence?.distributedLiquidity === true;
+
   if (tier === "PERMANENT" || tier === "BURNED") {
     hit.add("LP_PERMANENT");
+  } else if (distributed) {
+    hit.add("DISTRIBUTED_LIQUIDITY");
   } else if (tier === "UNVERIFIED") {
     hit.add("LP_UNVERIFIED");
   } else if (!tier || tier === "TIMED") {
@@ -239,6 +252,7 @@ export function mapShareCardChips(
     const established = isEstablishedPath(badge);
     if (
       !established &&
+      !distributed &&
       (lp.grade === "F" || /unlocked|free\s*lp|no lock/i.test(textBlob(lp.summary, lp.detail)))
     ) {
       if (tier !== "PERMANENT" && tier !== "BURNED" && tier !== "TIMED") {
