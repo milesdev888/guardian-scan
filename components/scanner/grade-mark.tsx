@@ -1,14 +1,6 @@
 import { cn } from "@/lib/utils";
 import type { Grade } from "@/lib/guardian/types";
-
-const GRADE_STYLES: Record<Grade, string> = {
-  A: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
-  B: "border-lime-500/40 bg-lime-500/10 text-lime-200",
-  C: "border-amber-400/40 bg-amber-400/10 text-amber-200",
-  D: "border-orange-500/40 bg-orange-500/10 text-orange-200",
-  F: "border-red-500/45 bg-red-500/10 text-red-300",
-  U: "border-border bg-secondary text-muted-foreground",
-};
+import { GRADE_TILE_CLASS } from "@/lib/guardian/grade-colors";
 
 export function GradeMark({
   grade,
@@ -21,18 +13,25 @@ export function GradeMark({
   className?: string;
   labeled?: boolean;
 }) {
+  const isAa = grade === "AA";
   const dim =
     size === "lg"
-      ? "h-20 w-20 text-5xl"
+      ? isAa
+        ? "h-20 w-24 text-4xl"
+        : "h-20 w-20 text-5xl"
       : size === "sm"
-        ? "h-8 w-8 text-sm"
-        : "h-12 w-12 text-2xl";
+        ? isAa
+          ? "h-8 w-10 text-xs"
+          : "h-8 w-8 text-sm"
+        : isAa
+          ? "h-12 w-14 text-xl"
+          : "h-12 w-12 text-2xl";
   const mark = (
     <div
       className={cn(
-        "flex items-center justify-center rounded-xl border font-heading",
+        "flex items-center justify-center rounded-xl border font-heading tracking-tight",
         dim,
-        GRADE_STYLES[grade],
+        GRADE_TILE_CLASS[grade],
         className,
       )}
       aria-hidden={!labeled}
