@@ -42,7 +42,7 @@ Serving discipline: same as `/api/seal/<serial>.png` — path param is a lookup 
 |-----------|------|------|
 | PERMANENT / burned | `LP PERMANENT · 100% locked` | green |
 | Timed lock | `LP LOCKED · until <YYYY-MM-DD>` | gold |
-| Established path (badge) **or** deep distributed liquidity (≥3 independent pools, ≥$100K depth) | `LIQUIDITY DISTRIBUTED · N independent pools` | gold — **never** the word “unlocked”; chip **DISTRIBUTED LIQUIDITY** |
+| Established path (badge) **or** deep distributed liquidity (≥3 independent pools, **≥$1M** combined depth — `DISTRIBUTED_LIQUIDITY_MIN_*` in `lib/guardian/grade.ts`) | `LIQUIDITY DISTRIBUTED · N independent pools` | gold — **never** “weak” / “unlocked”; chip **DISTRIBUTED LIQUIDITY** |
 | Non-qualifying unlocked | `LP UNLOCKED` | amber — chip **LP UNLOCKED**; headline **Weak LP lock** only for young/thin single-pool unlocks |
 | Unverified reported lock | `LP UNVERIFIED · <pct>% reported` (pct or `—`) | amber |
 

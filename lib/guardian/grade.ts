@@ -42,6 +42,15 @@ export const AA_ESTABLISHED_MIN_POOLS = 3;
 export const AA_ESTABLISHED_MIN_LIQUIDITY_USD = 100_000;
 
 /**
+ * Distributed-Liquidity *presentation* (chips / LP line / headlines).
+ * Blue-chip EVM books: ≥3 independent pools and ≥$1M combined depth.
+ * Never show “Weak LP lock” / “unlocked” wording when this qualifies.
+ * Stricter than AA’s Established-path LP dollar floor ($100K + no majority).
+ */
+export const DISTRIBUTED_LIQUIDITY_MIN_POOLS = 3;
+export const DISTRIBUTED_LIQUIDITY_MIN_USD = 1_000_000;
+
+/**
  * Score → letter grade. Never returns AA — platinum requires applyAaIfEligible.
  */
 export function gradeFromScore(score: number): Grade {
@@ -275,17 +284,19 @@ export function analyzePoolsForAa(pools: LiquidityPool[] | null | undefined): Aa
 }
 
 /**
+/**
  * Deep distributed liquidity — Established-path *presentation* for chips / headlines / LP line.
- * ≥3 independent pools and ≥$100K total depth.
- * (AA eligibility still requires no single-pool majority via analyzePoolsForAa.)
+ * Threshold: ≥3 independent pools and ≥$1M combined depth
+ * (DISTRIBUTED_LIQUIDITY_MIN_POOLS / DISTRIBUTED_LIQUIDITY_MIN_USD).
+ * AA eligibility still requires ≥$100K + no single-pool majority via analyzePoolsForAa.
  */
 export function isDistributedLiquidity(
   pools: LiquidityPool[] | null | undefined,
 ): boolean {
   const stats = analyzePoolsForAa(pools);
   return (
-    stats.poolCount >= AA_ESTABLISHED_MIN_POOLS &&
-    stats.totalLiquidityUsd >= AA_ESTABLISHED_MIN_LIQUIDITY_USD
+    stats.poolCount >= DISTRIBUTED_LIQUIDITY_MIN_POOLS &&
+    stats.totalLiquidityUsd >= DISTRIBUTED_LIQUIDITY_MIN_USD
   );
 }
 
