@@ -2,6 +2,10 @@
 
 Endpoint: `GET /api/card/<mint>.png` on scan.cyre.dev  
 Size: **1600×1067** PNG  
+
+OG / social unfurl: `GET /api/card/<mint>/og.png` — long edge **~1024px**, target **under 300KB**.  
+Wire `og:image` / `twitter:image` on report pages to the **og** URL (not full-res).
+
 Source of truth: latest **stored** Guardian scan (re-scan if none or older than 24h).  
 Serving discipline: same as `/api/seal/<serial>.png` — path param is a lookup key only; **all painted text comes from stored records**, never from URL query params.
 
