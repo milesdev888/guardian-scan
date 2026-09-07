@@ -582,6 +582,7 @@ export class SolanaAdapter implements ChainAdapter {
     const { grade: baseGrade, score, headline, patterns } = compileReportMeta(
       checks,
       extraPatterns,
+      { pools },
     );
     const lp = toLpLockInfo(lpAssessment);
     const { grade } = applyAaIfEligible(score, baseGrade, {
