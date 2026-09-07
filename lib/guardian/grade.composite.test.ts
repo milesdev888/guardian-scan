@@ -4,6 +4,7 @@ import {
   compileReportMeta,
   evaluateAaEligibility,
   gradeFromScore,
+  isDistributedLiquidity,
 } from "./grade";
 import type { Check, LiquidityPool, LpLockInfo, Pattern } from "./types";
 
@@ -186,9 +187,54 @@ const withFraud = applyAaIfEligible(100, "A", {
 assert.equal(withFraud.grade, "A");
 assert.equal(withFraud.aa.fraudOk, false);
 
+// Distributed liquidity headline — never "Weak LP lock"
+const deepPools: LiquidityPool[] = [
+  { dex: "uniswap", pairAddress: "1", quote: "WETH", liquidityUsd: 2_000_000, createdAt: null, url: null },
+  { dex: "uniswap", pairAddress: "2", quote: "USDC", liquidityUsd: 1_500_000, createdAt: null, url: null },
+  { dex: "sushiswap", pairAddress: "3", quote: "WETH", liquidityUsd: 1_200_000, createdAt: null, url: null },
+];
+assert.equal(isDistributedLiquidity(deepPools), true);
+const distMeta = compileReportMeta(
+  [
+    c("honeypot_simulation", "A"),
+    c("lp_lock", "C", { status: "flag", summary: "0% locked" }),
+    c("holder_concentration", "A"),
+    c("owner_privileges", "A"),
+    c("transfer_tax", "A"),
+    c("contract_age", "A"),
+    c("copycats", "A"),
+  ],
+  [],
+  { pools: deepPools },
+);
+assert.match(distMeta.headline, /Distributed liquidity/i);
+assert.doesNotMatch(distMeta.headline, /Weak LP lock/i);
+
+// Thin single unlocked pool → Weak LP lock
+const thinPools: LiquidityPool[] = [
+  { dex: "uniswap", pairAddress: "1", quote: "WETH", liquidityUsd: 8_000, createdAt: null, url: null },
+];
+assert.equal(isDistributedLiquidity(thinPools), false);
+const thinMeta = compileReportMeta(
+  [
+    c("honeypot_simulation", "A"),
+    c("lp_lock", "F", { status: "flag", summary: "unlocked" }),
+    c("holder_concentration", "A"),
+    c("owner_privileges", "A"),
+    c("transfer_tax", "A"),
+    c("contract_age", "D", { status: "flag" }),
+    c("copycats", "A"),
+  ],
+  [],
+  { pools: thinPools },
+);
+assert.match(thinMeta.headline, /Weak LP lock/i);
+
 console.log("grade.composite.test.ts ok", {
   allA,
   withU,
   weakLp: weakLp.score,
   aa: upgraded.grade,
+  distributed: distMeta.headline,
+  thin: thinMeta.headline,
 });
