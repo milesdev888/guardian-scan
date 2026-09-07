@@ -1,0 +1,59 @@
+name: inflate-aa-payload
+on:
+  push:
+    branches: [cursor/grade-aa-platinum-354a]
+    paths:
+      - '__aa_payload/**'
+      - '.github/workflows/inflate-aa-payload.yml'
+permissions:
+  contents: write
+jobs:
+  inflate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cursor/grade-aa-platinum-354a
+      - name: Inflate payload files
+        run: |
+          python3 <<'PY'
+          import base64, gzip, json, pathlib, hashlib, os, subprocess
+          root = pathlib.Path('__aa_payload')
+          if not root.exists():
+            print('no payload'); raise SystemExit(0)
+          changed = []
+          for p in sorted(root.glob('*.json')):
+            if p.name == 'DONE.json':
+              continue
+            data = json.loads(p.read_text())
+            for path, meta in data.items():
+              raw = gzip.decompress(base64.b64decode(meta['gz_b64']))
+              assert hashlib.md5(raw).hexdigest() == meta['md5'], path
+              dest = pathlib.Path(path)
+              dest.parent.mkdir(parents=True, exist_ok=True)
+              dest.write_bytes(raw)
+              changed.append(path)
+              print('wrote', path, len(raw))
+          pathlib.Path('__aa_payload/DONE.json').write_text('{"ok":true}\n')
+          # remove part jsons except DONE
+          for p in root.glob('*.json'):
+            if p.name != 'DONE.json':
+              p.unlink()
+          print('changed', changed)
+          PY
+      - name: Commit inflated files
+        run: |
+          git config user.name "Cyredev"
+          git config user.email "milesfrancisco73@gmail.com"
+          git add -A
+          if git diff --cached --quiet; then echo 'nothing'; exit 0; fi
+          git commit -m "$(cat <<'EOF'
+          feat(scan): Grade AA platinum + unified grade colors
+
+          Add AA eligibility (score≥90, age≥365d, permanent/established LP,
+          revoked authorities, zero fraud) without rounding up from score.
+          Unify AA/A/B/C/D/F colors across UI and share cards; show Proven
+          line on AA reports; replace \"% secured\" with \"% locked\".
+          EOF
+          )"
+          git push
