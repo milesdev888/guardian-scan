@@ -51,7 +51,7 @@ export function BadgeSealCorner({ mint }: { mint: string }) {
     data.verifyUrl || `https://cyre.dev/verify/${encodeURIComponent(data.badge.serial)}`;
   const seal =
     data.sealUrl ||
-    `https://cyre.dev/api/seal/${encodeURIComponent(data.badge.serial)}.png`;
+    `https://cyre.dev/api/seal/${encodeURIComponent(data.badge.serial)}/og.png`;
   const path = data.badge.pathLabel || data.badge.qualifyPath || "Badge";
 
   return (

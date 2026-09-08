@@ -60,8 +60,8 @@ function roundRect(
   ctx.beginPath();
   ctx.moveTo(x + radius, y);
   ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x + w, y + h, radius);
   ctx.arcTo(x + w, y + h, x, y + h, radius);
-  ctx.arcTo(x, y + h, x, y, radius);
   ctx.arcTo(x, y, x + w, y, radius);
   ctx.closePath();
 }
@@ -233,7 +233,7 @@ async function loadSealMark(serial: string | null) {
   // Runtime fetch — keep the guardian-scan repo free of multi-MB seal PNGs.
   const urls: string[] = [];
   if (serial) {
-    urls.push(`https://cyre.dev/api/seal/${encodeURIComponent(serial)}.png`);
+    urls.push(`https://cyre.dev/api/seal/${encodeURIComponent(serial)}/og.png`);
   }
   urls.push("https://cyre.dev/brand/seals/guardian-seal-medallion.png");
   for (const url of urls) {
