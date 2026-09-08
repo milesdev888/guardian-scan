@@ -1,625 +1,677 @@
+import {
+  Connection,
+  PublicKey,
+  type AccountInfo,
+  type ParsedAccountData,
+} from "@solana/web3.js";
+import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { getSolanaRpcUrl } from "@/lib/config";
+import { getCached, setCached } from "@/lib/cache";
+import {
+  getDexscreenerPair,
+  getDexscreenerPairsByToken,
+  type DexscreenerPair,
+} from "@/lib/sources/dexscreener";
+import { getGeckoTerminalPool } from "@/lib/sources/geckoterminal";
+import { getRugCheckReport } from "@/lib/sources/rugcheck";
+import { getGoPlusTokenSecurity } from "@/lib/sources/goplus";
+import { getHeliusAsset } from "@/lib/sources/helius";
+import {
+  getTokenMetadata,
+  type TokenMetadataLookup,
+} from "@/lib/sources/token-metadata";
+import { resolveTokenTwitter } from "@/lib/guardian/resolve-twitter";
 import type {
-  ChainConfig,
-  Check,
-  GuardianReport,
-  Holder,
-  LiquidityPool,
-  Pattern,
-  PresenceMatch,
-  SolanaChainConfig,
-  SourceStatus,
+  ChainAdapter,
+  HolderConcentration,
+  ScanEvidence,
+  TokenIdentity,
+  TokenomicsSnapshot,
 } from "@/lib/guardian/types";
-import { DISCLAIMER } from "@/lib/guardian/types";
-import { isSolanaAddress } from "@/lib/chains/detect";
-import { findCopycats } from "@/lib/guardian/copycats";
-import {
-  applyAaIfEligible,
-  check,
-  compileReportMeta,
-  daysAgo,
-  formatAge,
-  formatPct,
-  formatUsd,
-  pattern,
-} from "@/lib/guardian/grade";
-import { classifyLp, lpCheckFrom, toLpLockInfo } from "@/lib/guardian/lp-tier";
-import { fetchDexToken, filterPairsForChain, identityFromPairs } from "@/lib/sources/dexscreener";
-import { fetchGoPlusSolana } from "@/lib/sources/goplus";
-import { fetchRugCheck, labelFromKnownAccount } from "@/lib/sources/rugcheck";
-import { parseRugCheckMarkets } from "@/lib/sources/rugcheck-markets";
-import { solanaAccountExists } from "@/lib/sources/rpc";
-import {
-  getAccountOwner,
-  getMultipleAccountOwners,
-  getMultipleTokenAccountAuthorities,
-  labelForProtocolOwner,
-  METEORA_DAMM_V2_PROGRAM,
-  resolveMintDeployer,
-  SOLANA_BURN_ADDRESSES,
-} from "@/lib/sources/solana-onchain";
-import type { ChainAdapter } from "@/lib/adapters/types";
 
-function asSolana(chain: ChainConfig): SolanaChainConfig {
-  if (chain.family !== "solana") {
-    throw new Error("SolanaAdapter received a non-Solana chain config");
-  }
-  return chain;
+const NETWORK = "mainnet-beta" as const;
+const ZERO_ADDRESS = "11111111111111111111111111111111";
+const METADATA_PROGRAM_ID = new PublicKey(
+  "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+);
+
+type MintSnapshot = {
+  supply: string;
+  decimals: number;
+  mintAuthority: string | null;
+  freezeAuthority: string | null;
+  isInitialized: boolean;
+};
+
+type SolanaAdapterMeta = {
+  mint: MintSnapshot | null;
+  metadata: TokenMetadataLookup | null;
+  dexscreener: DexscreenerPair | null;
+  gecko: Awaited<ReturnType<typeof getGeckoTerminalPool>>;
+  rugcheck: Awaited<ReturnType<typeof getRugCheckReport>>;
+  goplus: Awaited<ReturnType<typeof getGoPlusTokenSecurity>>;
+  helius: Awaited<ReturnType<typeof getHeliusAsset>>;
+};
+
+function connection() {
+  return new Connection(getSolanaRpcUrl(), "confirmed");
 }
 
-/**
- * Protocol vaults, bonding curves, escrows, vesting lockers, and burns are not free-float.
- * Matches RugCheck names (e.g. "Streamflow Vault") and on-chain protocol labels.
- */
-export function isExcludedConcentrationTag(tag: string | null | undefined): boolean {
-  if (!tag) return false;
-  return /pool vault|bonding curve|escrow|burn|blackhole|damm|locker|streamflow|uncx|unicrypt|team\s*finance|goki|vest|vault|amm\b/i.test(
-    tag,
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function asNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function uniqueStrings(values: Array<string | null | undefined>): string[] {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter(Boolean),
+    ),
   );
 }
 
-export class SolanaAdapter implements ChainAdapter {
-  family = "solana" as const;
+function metadataPda(mint: PublicKey): PublicKey {
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("metadata"), METADATA_PROGRAM_ID.toBuffer(), mint.toBuffer()],
+    METADATA_PROGRAM_ID,
+  );
+  return pda;
+}
 
-  supports(address: string) {
-    return isSolanaAddress(address);
-  }
+function readBorshString(
+  data: Buffer,
+  offset: number,
+): { value: string; next: number } | null {
+  if (offset + 4 > data.length) return null;
+  const length = data.readUInt32LE(offset);
+  const start = offset + 4;
+  const end = start + length;
+  if (length < 0 || end > data.length) return null;
+  return {
+    value: data.subarray(start, end).toString("utf8").replace(/\0/g, "").trim(),
+    next: end,
+  };
+}
 
-  async probe(address: string, chain: ChainConfig): Promise<PresenceMatch> {
-    const sol = asSolana(chain);
-    const result = await solanaAccountExists(sol.rpcUrl, address);
-    return {
-      chainId: sol.id,
-      chainName: sol.name,
-      family: "solana",
-      exists: result.exists,
-      isContract: result.exists,
-      error: result.error,
-    };
-  }
-
-  async findCopycats(ticker: string, chain: ChainConfig, excludeAddress: string) {
-    const sol = asSolana(chain);
-    const { copycats } = await findCopycats({
-      ticker,
-      chainId: sol.id,
-      chainName: sol.name,
-      dexScreenerChain: sol.dexScreenerChain,
-      excludeAddress,
-    });
-    return copycats;
-  }
-
-  async scan(address: string, chain: ChainConfig): Promise<GuardianReport> {
-    const sol = asSolana(chain);
-    const sources: SourceStatus[] = [];
-    const note = (id: string, ok: boolean, error?: string) => sources.push({ id, ok, error });
-
-    const [rug, goplus, dex, account] = await Promise.all([
-      fetchRugCheck(address),
-      fetchGoPlusSolana(address),
-      fetchDexToken(address),
-      solanaAccountExists(sol.rpcUrl, address),
-    ]);
-
-    note("rugcheck", Boolean(rug.data), rug.error);
-    note("goplus-solana", Boolean(goplus.data), goplus.error);
-    note("dexscreener", !dex.error, dex.error);
-    note("solana-rpc", account.exists, account.error);
-
-    const pairs = filterPairsForChain(dex.pairs, "solana");
-    const identity = identityFromPairs(pairs.length ? pairs : dex.pairs, address);
-    const name = rug.data?.tokenMeta.name ?? goplus.data?.token_name ?? identity.name;
-    const symbol = rug.data?.tokenMeta.symbol ?? goplus.data?.token_symbol ?? identity.symbol;
-
-    const mintAuth =
-      rug.data?.mintAuthority ?? (goplus.data?.mintable?.status === "1" ? "live" : null);
-    const freezeAuth =
-      rug.data?.freezeAuthority ?? (goplus.data?.freezable?.status === "1" ? "live" : null);
-    const mintLive = Boolean(mintAuth) && mintAuth !== "null";
-    const freezeLive = Boolean(freezeAuth) && freezeAuth !== "null";
-    const goplusMint = goplus.data?.mintable?.status === "1";
-    const goplusFreeze = goplus.data?.freezable?.status === "1";
-
-    const marketParse = parseRugCheckMarkets(rug.data?.markets ?? []);
-    const accountLabels = new Map(marketParse.accountLabels);
-
-    // Live-confirm deepest pool owner (Meteora DAMM v2 permanent positions).
-    const deepestParsed = [...marketParse.parsed].sort(
-      (a, b) => (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0),
-    )[0];
-    if (deepestParsed?.pubkey) {
-      const poolOwner = await getAccountOwner(sol.rpcUrl, deepestParsed.pubkey);
-      note("solana-pool-owner", !poolOwner.error, poolOwner.error);
-      if (poolOwner.owner === METEORA_DAMM_V2_PROGRAM) {
-        accountLabels.set(deepestParsed.pubkey, "Meteora DAMM v2 pool");
-        const idx = marketParse.parsed.findIndex((row) => row.pubkey === deepestParsed.pubkey);
-        if (idx >= 0) {
-          marketParse.parsed[idx].marketType = "meteora_damm_v2";
-          const market = marketParse.markets[idx];
-          if (market) {
-            market.marketType = "meteora_damm_v2";
-            market.lockerName = "Meteora DAMM v2";
-            // Permanent positions are not classic burns even when lpMint looks burned.
-            market.burnedPct = 0;
-          }
-        }
-      }
-    }
-
-    const rawHolders = (
-      rug.data?.topHolders.length ? rug.data.topHolders : (goplus.data?.holders ?? [])
-    ).slice(0, 12);
-
-    const holderAddresses = rawHolders
-      .map((row) => ("address" in row ? row.address : undefined) ?? "")
-      .filter(Boolean);
-
-    // RugCheck knownAccounts / lockers — labels Streamflow Vault, AMM, etc. by pubkey.
-    for (const [addr, meta] of Object.entries(rug.data?.knownAccounts ?? {})) {
-      const knownLabel = labelFromKnownAccount(meta);
-      if (knownLabel && !accountLabels.has(addr)) {
-        accountLabels.set(addr, knownLabel);
-      }
-    }
-    for (const locker of rug.data?.lockers ?? []) {
-      if (locker.address && !accountLabels.has(locker.address)) {
-        accountLabels.set(locker.address, locker.name || "Protocol locker escrow");
-      }
-    }
-
-    // AccountInfo.owner of an SPL token account is the Token Program — not the locker.
-    // Resolve the token authority (wallet / escrow PDA), then that account's program owner.
-    const authorityLookup = await getMultipleTokenAccountAuthorities(
-      sol.rpcUrl,
-      holderAddresses,
-    );
-    note("solana-holder-authorities", !authorityLookup.error, authorityLookup.error);
-
-    const authorityAddresses = [
-      ...new Set(
-        [...authorityLookup.authorities.values()].filter((value): value is string => Boolean(value)),
-      ),
-    ];
-    const programOwnerLookup = await getMultipleAccountOwners(sol.rpcUrl, [
-      ...holderAddresses,
-      ...authorityAddresses,
-    ]);
-    note("solana-holder-owners", !programOwnerLookup.error, programOwnerLookup.error);
-
-    for (const addr of holderAddresses) {
-      if (accountLabels.has(addr)) continue;
-      const authority = authorityLookup.authorities.get(addr) ?? null;
-      // Prefer labeling via the escrow/wallet program that owns the token authority.
-      const authorityProgram = authority
-        ? programOwnerLookup.owners.get(authority) ?? null
-        : null;
-      const viaAuthority = labelForProtocolOwner(authorityProgram);
-      if (viaAuthority) {
-        accountLabels.set(addr, viaAuthority);
-        continue;
-      }
-      // Also try the holder pubkey itself (rare: holder is a program PDA, not a token account).
-      const directOwner = programOwnerLookup.owners.get(addr) ?? null;
-      const viaDirect = labelForProtocolOwner(directOwner);
-      if (viaDirect) {
-        accountLabels.set(addr, viaDirect);
-      }
-    }
-    for (const addr of holderAddresses) {
-      if (SOLANA_BURN_ADDRESSES.has(addr) && !accountLabels.has(addr)) {
-        accountLabels.set(addr, "Burn address");
-      }
-    }
-
-    const holders: Holder[] = rawHolders.slice(0, 10).map((row) => {
-      const addr = ("address" in row ? row.address : undefined) ?? "";
-      const percent =
-        "pct" in row ? (row.pct ?? null) : Number((row as { percent?: string }).percent ?? 0) * 100;
-      const priorTag =
-        "insider" in row && row.insider
-          ? "insider"
-          : ((row as { tag?: string }).tag ?? null);
-      const protocolTag = accountLabels.get(addr) ?? null;
-      const tag = protocolTag ?? priorTag;
+function parseMetaplexMetadata(data: Buffer): {
+  name: string | null;
+  symbol: string | null;
+  uri: string | null;
+  updateAuthority: string | null;
+  isMutable: boolean | null;
+  primarySaleHappened: boolean | null;
+} {
+  try {
+    if (data.length < 69) {
       return {
-        address: addr,
-        percent,
-        tag,
-        locked:
-          Boolean(protocolTag) ||
-          ("is_locked" in row ? (row as { is_locked?: number }).is_locked === 1 : null),
+        name: null,
+        symbol: null,
+        uri: null,
+        updateAuthority: null,
+        isMutable: null,
+        primarySaleHappened: null,
       };
-    });
-
-    const freeFloatHolders = holders.filter((row) => !isExcludedConcentrationTag(row.tag));
-    const rawTop10 = holders.reduce((sum, row) => sum + (row.percent ?? 0), 0);
-    const top10 = freeFloatHolders.reduce((sum, row) => sum + (row.percent ?? 0), 0);
-    const excludedPct = holders
-      .filter((row) => isExcludedConcentrationTag(row.tag))
-      .reduce((sum, row) => sum + (row.percent ?? 0), 0);
-    const concentration = {
-      rawTop10: Math.min(100, rawTop10),
-      adjustedTop10: Math.min(100, top10),
-      excludedPct: Math.min(100, excludedPct),
-    };
-
-    const pools: LiquidityPool[] = (pairs.length ? pairs : dex.pairs).slice(0, 6).map((pair) => ({
-      dex: pair.dexId,
-      pairAddress: pair.pairAddress,
-      quote: pair.quoteToken.symbol ?? "",
-      liquidityUsd: pair.liquidityUsd,
-      createdAt: pair.pairCreatedAt,
-      url: pair.url,
-    }));
-
-    const copycats = symbol
-      ? (
-          await findCopycats({
-            ticker: symbol,
-            chainId: sol.id,
-            chainName: sol.name,
-            dexScreenerChain: sol.dexScreenerChain,
-            excludeAddress: address,
-          })
-        ).copycats
-      : [];
-
-    const checks: Check[] = [];
-    const extraPatterns: Pattern[] = [];
-
-    const mutable = rug.data?.tokenMeta.mutable;
-    checks.push(
-      mutable
-        ? check({
-            id: "verified_source",
-            title: "Metadata / source",
-            status: "flag",
-            grade: "C",
-            summary: "Token metadata is still mutable.",
-            detail:
-              "Solana tokens do not use Etherscan-style verification. Mutable metadata means name, symbol, and URI can still change.",
-          })
-        : check({
-            id: "verified_source",
-            title: "Metadata / source",
-            status: mutable === false ? "pass" : "unknown",
-            grade: mutable === false ? "A" : "U",
-            summary:
-              mutable === false
-                ? "Metadata update authority is frozen."
-                : "Metadata mutability was not returned.",
-            detail:
-              "Guardian maps Solana metadata authority onto the same verified-source slot used for EVM explorer verification.",
-          }),
-    );
-
-    checks.push(
-      check({
-        id: "proxy_upgradeable",
-        title: "Proxy / upgradeable",
-        status: "pass",
-        grade: "A",
-        summary: "Solana SPL tokens are not EVM proxies.",
-        detail:
-          "Upgrade authority on a custom program is out of v2 scope. Standard Token / Token-2022 mints are reported through mint and freeze authorities instead.",
-      }),
-    );
-
-    const privilegeOn = mintLive || freezeLive || goplusMint || goplusFreeze;
-    if (privilegeOn) {
-      extraPatterns.push(
-        pattern(
-          "authorities",
-          "critical",
-          "Mint or freeze authority still live",
-          [mintLive || goplusMint ? "mint" : null, freezeLive || goplusFreeze ? "freeze" : null]
-            .filter(Boolean)
-            .join(" + "),
-        ),
-      );
-    }
-    checks.push(
-      privilegeOn
-        ? check({
-            id: "owner_privileges",
-            title: "Owner privileges",
-            status: "flag",
-            grade: mintLive || goplusMint ? "F" : "D",
-            summary: `${mintLive || goplusMint ? "Mint authority live" : "Mint burned"}${
-              freezeLive || goplusFreeze ? "; freeze authority live" : ""
-            }.`,
-            detail:
-              "Mint and freeze map to the EVM owner-privilege slot (mint / pause). A live mint can inflate supply; freeze can halt wallets.",
-            evidence: { mintAuth, freezeAuth },
-          })
-        : check({
-            id: "owner_privileges",
-            title: "Owner privileges",
-            status: "pass",
-            grade: "A",
-            summary: "Mint and freeze authorities are revoked.",
-            detail: "No mint/freeze authority returned by RugCheck or GoPlus.",
-          }),
-    );
-
-    const feeRateRaw =
-      (goplus.data?.transfer_fee as { current_fee_rate?: { fee_rate?: number | string } } | undefined)
-        ?.current_fee_rate?.fee_rate ?? null;
-    const feeRate =
-      feeRateRaw === null || feeRateRaw === undefined || feeRateRaw === ""
-        ? null
-        : Number(feeRateRaw);
-    const feeRateNum = feeRate !== null && Number.isFinite(feeRate) ? feeRate : null;
-    checks.push(
-      feeRateNum && feeRateNum > 0
-        ? check({
-            id: "transfer_tax",
-            title: "Transfer tax",
-            status: "flag",
-            grade: feeRateNum >= 10 ? "D" : "C",
-            summary: `Token-2022 transfer fee ≈ ${formatPct(feeRateNum)}.`,
-            detail:
-              "Transfer-fee extension on Token-2022. This is the Solana equivalent of an EVM transfer tax.",
-          })
-        : check({
-            id: "transfer_tax",
-            title: "Transfer tax",
-            status: feeRateNum === 0 ? "pass" : "unknown",
-            grade: feeRateNum === 0 ? "A" : "U",
-            summary:
-              feeRateNum === 0
-                ? "No Token-2022 transfer fee reported."
-                : "No transfer-fee extension in the GoPlus payload.",
-            detail:
-              "Solana does not use EVM buy/sell tax fields; Guardian maps Token-2022 transfer fees here.",
-          }),
-    );
-
-    const rugHoneypot = (rug.data?.risks ?? []).some((risk) =>
-      /honeypot|can't sell|cannot sell/i.test(`${risk.name} ${risk.description}`),
-    );
-    checks.push(
-      rugHoneypot
-        ? check({
-            id: "honeypot_simulation",
-            title: "Honeypot simulation",
-            status: "flag",
-            grade: "F",
-            summary: "RugCheck risk list includes a sell-trap pattern.",
-            detail: rug.data?.risks.map((risk) => risk.name).join(", ") ?? "",
-          })
-        : check({
-            id: "honeypot_simulation",
-            title: "Honeypot simulation",
-            status: "pass",
-            grade: "B",
-            summary: "No sell-trap item in the RugCheck risk list.",
-            detail:
-              "Solana has no Honeypot.is buy→sell fork. Guardian uses RugCheck risks as the equivalent slot so the report shape stays identical to EVM.",
-          }),
-    );
-
-    const createdAt = pools[0]?.createdAt ?? rug.data?.detectedAt ?? null;
-    const ageDays = daysAgo(createdAt);
-
-    const lpAssessment = classifyLp({
-      family: "solana",
-      tokenAgeDays: ageDays,
-      markets: marketParse.markets,
-      lockers: (rug.data?.lockers ?? []).map((locker) => ({
-        programId: null,
-        type: locker.type,
-        name: locker.name,
-        unlockAt: null,
-      })),
-    });
-    checks.push(lpCheckFrom(lpAssessment));
-
-    checks.push(
-      holders.length === 0
-        ? check({
-            id: "holder_concentration",
-            title: "Holder concentration",
-            status: "unknown",
-            grade: "U",
-            summary: "Top-10 holders were not returned.",
-            detail: "RugCheck and GoPlus both missed holder tables.",
-          })
-        : freeFloatHolders.length === 0
-          ? check({
-              id: "holder_concentration",
-              title: "Holder concentration",
-              status: "unknown",
-              grade: "U",
-              summary: `Top 10 hold ${formatPct(concentration.rawTop10)} raw · all excluded as vaults/locks/burns.`,
-              detail: `Excluded ${formatPct(concentration.excludedPct)} in protocol / burn accounts from free-float math.`,
-              evidence: { ...concentration },
-            })
-          : top10 >= 70
-            ? check({
-                id: "holder_concentration",
-                title: "Holder concentration",
-                status: "flag",
-                grade: top10 >= 90 ? "F" : "D",
-                summary: `Top 10 hold ${formatPct(concentration.rawTop10)} raw · ${formatPct(
-                  concentration.adjustedTop10,
-                )} excluding locked & LP.`,
-                detail: `Grade keys off free-float. Excluded ${formatPct(
-                  concentration.excludedPct,
-                )} in pool vaults, bonding curves, locker escrows, and burns.`,
-                evidence: { ...concentration },
-              })
-            : check({
-                id: "holder_concentration",
-                title: "Holder concentration",
-                status: "pass",
-                grade: top10 >= 50 ? "B" : "A",
-                summary: `Top 10 hold ${formatPct(concentration.rawTop10)} raw · ${formatPct(
-                  concentration.adjustedTop10,
-                )} excluding locked & LP.`,
-                detail: `${freeFloatHolders.length} free-float accounts scored; protocol vaults and burns labeled but excluded.`,
-                evidence: { ...concentration },
-              }),
-    );
-
-    checks.push(
-      ageDays === null
-        ? check({
-            id: "contract_age",
-            title: "Contract age",
-            status: "unknown",
-            grade: "U",
-            summary: "Mint creation time was not available.",
-            detail: "DexScreener pairCreatedAt is the Solana age proxy in v2.",
-            evidence: { ageDays: null, createdAt },
-          })
-        : ageDays < 2
-          ? check({
-              id: "contract_age",
-              title: "Contract age",
-              status: "flag",
-              grade: "D",
-              summary: `First pool is ${formatAge(createdAt)} old.`,
-              detail: "New Solana mints are where copycat tickers cluster.",
-              evidence: { ageDays, createdAt },
-            })
-          : check({
-              id: "contract_age",
-              title: "Contract age",
-              status: "pass",
-              grade: ageDays < 30 ? "B" : "A",
-              summary: `First pool is ${formatAge(createdAt)} old.`,
-              detail: "Age from first listed pool / detection timestamp.",
-              evidence: { ageDays, createdAt },
-            }),
-    );
-
-    let deployer = rug.data?.deployer ?? goplus.data?.creator_address ?? null;
-    if (!deployer) {
-      const resolved = await resolveMintDeployer(sol.rpcUrl, address);
-      note("solana-deployer", Boolean(resolved.deployer), resolved.error);
-      deployer = resolved.deployer;
-    } else {
-      note("solana-deployer", true);
     }
 
-    checks.push(
-      deployer
-        ? check({
-            id: "deployer_age",
-            title: "Deployer wallet age",
-            status: "unknown",
-            grade: "U",
-            summary: `Creator ${deployer} — first-signature age not fetched in v2.`,
-            detail:
-              rug.data?.deployer || goplus.data?.creator_address
-                ? "Creator from RugCheck / GoPlus. Full first-signature aging ships with Watch."
-                : "Creator resolved from the mint's earliest on-chain initializeMint / fee payer (RugCheck omitted creator).",
-            evidence: { deployer },
-          })
-        : check({
-            id: "deployer_age",
-            title: "Deployer wallet age",
-            status: "unknown",
-            grade: "U",
-            summary: "Creator wallet could not be resolved on-chain.",
-            detail: "RugCheck omitted creator and the mint signature walk did not return a fee payer.",
-          }),
-    );
+    const updateAuthority = new PublicKey(data.subarray(1, 33)).toBase58();
+    let offset = 65;
+    const name = readBorshString(data, offset);
+    if (!name) {
+      return {
+        name: null,
+        symbol: null,
+        uri: null,
+        updateAuthority,
+        isMutable: null,
+        primarySaleHappened: null,
+      };
+    }
+    offset = name.next;
+    const symbol = readBorshString(data, offset);
+    if (!symbol) {
+      return {
+        name: name.value || null,
+        symbol: null,
+        uri: null,
+        updateAuthority,
+        isMutable: null,
+        primarySaleHappened: null,
+      };
+    }
+    offset = symbol.next;
+    const uri = readBorshString(data, offset);
+    if (!uri) {
+      return {
+        name: name.value || null,
+        symbol: symbol.value || null,
+        uri: null,
+        updateAuthority,
+        isMutable: null,
+        primarySaleHappened: null,
+      };
+    }
+    offset = uri.next + 2; // seller fee basis points
 
-    const oldestCopy = copycats.find((row) => row.flags.includes("oldest"));
-    const deepestCopy = copycats.find((row) => row.flags.includes("deepest"));
-    checks.push(
-      !symbol
-        ? check({
-            id: "copycats",
-            title: "Same-ticker copies",
-            status: "unknown",
-            grade: "U",
-            summary: "No ticker to search.",
-            detail: "Mint symbol was not resolved.",
-          })
-        : copycats.length === 0
-          ? check({
-              id: "copycats",
-              title: "Same-ticker copies",
-              status: "pass",
-              grade: "A",
-              summary: `No other ${symbol} pools on Solana in the search window.`,
-              detail: "DexScreener + Jupiter + GeckoTerminal same-ticker search.",
-            })
-          : check({
-              id: "copycats",
-              title: "Same-ticker copies",
-              status: "flag",
-              grade: "C",
-              summary: `${copycats.length} other ${symbol} mint(s) on Solana. Oldest and deepest are flagged.`,
-              detail: [
-                oldestCopy
-                  ? `Oldest: ${oldestCopy.address} (${formatAge(oldestCopy.createdAt)}).`
-                  : null,
-                deepestCopy
-                  ? `Deepest: ${deepestCopy.address} (${formatUsd(deepestCopy.liquidityUsd)}).`
-                  : null,
-                "Search depth: DexScreener + Jupiter token search + GeckoTerminal pools.",
-              ]
-                .filter(Boolean)
-                .join(" "),
-            }),
-    );
-
-    if (copycats.length) {
-      extraPatterns.push(
-        pattern(
-          "copycats",
-          "watch",
-          `Same ticker (${symbol}) on Solana`,
-          "Oldest and deepest same-ticker mints are listed. The scanned mint is not assumed original.",
-        ),
-      );
+    const hasCreators = data[offset];
+    offset += 1;
+    if (hasCreators === 1) {
+      if (offset + 4 > data.length) {
+        return {
+          name: name.value || null,
+          symbol: symbol.value || null,
+          uri: uri.value || null,
+          updateAuthority,
+          isMutable: null,
+          primarySaleHappened: null,
+        };
+      }
+      const creatorCount = data.readUInt32LE(offset);
+      offset += 4 + creatorCount * 34;
     }
 
-    const { grade: baseGrade, score, headline, patterns } = compileReportMeta(
-      checks,
-      extraPatterns,
-      { pools },
-    );
-    const lp = toLpLockInfo(lpAssessment);
-    const { grade } = applyAaIfEligible(score, baseGrade, {
-      checks,
-      pools,
-      lp,
-      patterns,
-    });
+    if (offset + 2 > data.length) {
+      return {
+        name: name.value || null,
+        symbol: symbol.value || null,
+        uri: uri.value || null,
+        updateAuthority,
+        isMutable: null,
+        primarySaleHappened: null,
+      };
+    }
+
+    const primarySaleHappened = data[offset] === 1;
+    const isMutable = data[offset + 1] === 1;
 
     return {
-      schema: "guardian.report.v2",
-      scannedAt: new Date().toISOString(),
-      chain: {
-        id: sol.id,
-        name: sol.name,
-        family: "solana",
-        explorerUrl: `${sol.explorerUrl}/token/${address}`,
-      },
-      token: {
-        address,
-        name,
-        symbol,
-        decimals: null,
-        imageUrl: identity.imageUrl,
-      },
-      grade,
-      score,
-      headline,
-      disclaimer: DISCLAIMER,
-      patterns,
-      checks,
-      copycats,
-      pools,
-      holders,
-      sources,
-      lp,
-      concentration,
+      name: name.value || null,
+      symbol: symbol.value || null,
+      uri: uri.value || null,
+      updateAuthority,
+      isMutable,
+      primarySaleHappened,
+    };
+  } catch {
+    return {
+      name: null,
+      symbol: null,
+      uri: null,
+      updateAuthority: null,
+      isMutable: null,
+      primarySaleHappened: null,
     };
   }
 }
+
+async function getMintSnapshot(address: string): Promise<MintSnapshot | null> {
+  const cacheKey = `solana:mint:${address}`;
+  const cached = getCached<MintSnapshot | null>(cacheKey);
+  if (cached) return cached.value;
+
+  try {
+    const mint = new PublicKey(address);
+    const info = await connection().getParsedAccountInfo(mint, "confirmed");
+    const data = info.value?.data;
+    if (!data || typeof data !== "object" || !("parsed" in data)) {
+      setCached(cacheKey, null, 30_000);
+      return null;
+    }
+
+    const parsed = asRecord((data as ParsedAccountData).parsed);
+    const infoNode = asRecord(parsed?.info);
+    if (!infoNode) {
+      setCached(cacheKey, null, 30_000);
+      return null;
+    }
+
+    const snapshot: MintSnapshot = {
+      supply: String(infoNode.supply ?? "0"),
+      decimals: Number(infoNode.decimals ?? 0),
+      mintAuthority: asString(infoNode.mintAuthority),
+      freezeAuthority: asString(infoNode.freezeAuthority),
+      isInitialized: Boolean(infoNode.isInitialized),
+    };
+    setCached(cacheKey, snapshot, 30_000);
+    return snapshot;
+  } catch {
+    setCached(cacheKey, null, 15_000);
+    return null;
+  }
+}
+
+async function getOnchainMetadata(address: string): Promise<{
+  name: string | null;
+  symbol: string | null;
+  uri: string | null;
+  updateAuthority: string | null;
+  isMutable: boolean | null;
+  primarySaleHappened: boolean | null;
+} | null> {
+  const cacheKey = `solana:metaplex:${address}`;
+  const cached = getCached<{
+    name: string | null;
+    symbol: string | null;
+    uri: string | null;
+    updateAuthority: string | null;
+    isMutable: boolean | null;
+    primarySaleHappened: boolean | null;
+  } | null>(cacheKey);
+  if (cached) return cached.value;
+
+  try {
+    const mint = new PublicKey(address);
+    const pda = metadataPda(mint);
+    const account = await connection().getAccountInfo(pda, "confirmed");
+    if (!account?.data) {
+      setCached(cacheKey, null, 60_000);
+      return null;
+    }
+    const parsed = parseMetaplexMetadata(Buffer.from(account.data));
+    setCached(cacheKey, parsed, 60_000);
+    return parsed;
+  } catch {
+    setCached(cacheKey, null, 30_000);
+    return null;
+  }
+}
+
+async function getLargestHolders(
+  address: string,
+): Promise<HolderConcentration | null> {
+  try {
+    const mint = new PublicKey(address);
+    const response = await connection().getTokenLargestAccounts(
+      mint,
+      "confirmed",
+    );
+    const amounts = response.value
+      .map((entry) => asNumber(entry.uiAmount))
+      .filter((value): value is number => value != null && value > 0);
+
+    if (!amounts.length) return null;
+
+    const mintSnapshot = await getMintSnapshot(address);
+    const supply =
+      mintSnapshot && Number(mintSnapshot.supply) > 0
+        ? Number(mintSnapshot.supply) / 10 ** mintSnapshot.decimals
+        : amounts.reduce((sum, value) => sum + value, 0);
+
+    if (!(supply > 0)) return null;
+
+    const top10Share =
+      amounts.slice(0, 10).reduce((sum, value) => sum + value, 0) / supply;
+    return {
+      top10Share: Math.max(0, Math.min(1, top10Share)),
+      sampleSize: amounts.length,
+      source: "solana_rpc",
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function detectTokenProgram(
+  address: string,
+): Promise<"spl-token" | "token-2022" | "unknown"> {
+  try {
+    const info = await connection().getAccountInfo(
+      new PublicKey(address),
+      "confirmed",
+    );
+    if (!info?.owner) return "unknown";
+    if (info.owner.equals(TOKEN_PROGRAM_ID)) return "spl-token";
+    if (info.owner.equals(TOKEN_2022_PROGRAM_ID)) return "token-2022";
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+function buildEvidence(meta: SolanaAdapterMeta): ScanEvidence[] {
+  const evidence: ScanEvidence[] = [];
+  const mint = meta.mint;
+  const metadata = meta.metadata;
+  const pair = meta.dexscreener;
+  const gecko = meta.gecko;
+  const rug = meta.rugcheck;
+  const goplus = meta.goplus;
+  const helius = meta.helius;
+
+  if (mint) {
+    evidence.push({
+      id: "solana_mint_authorities",
+      label: "Mint / freeze authority",
+      status: mint.mintAuthority || mint.freezeAuthority ? "warn" : "pass",
+      detail: `mint=${mint.mintAuthority ?? "revoked"}; freeze=${mint.freezeAuthority ?? "revoked"}`,
+      source: "solana_rpc",
+    });
+  }
+
+  if (metadata) {
+    evidence.push({
+      id: "solana_metadata_mutable",
+      label: "Metadata mutability",
+      status: metadata.isMutable ? "warn" : metadata.isMutable === false ? "pass" : "info",
+      detail:
+        metadata.isMutable == null
+          ? "Metadata mutability unknown"
+          : metadata.isMutable
+            ? "Update authority can still change metadata"
+            : "Metadata frozen / immutable",
+      source: metadata.source,
+    });
+  }
+
+  if (pair) {
+    const liq = asNumber(pair.liquidity?.usd);
+    evidence.push({
+      id: "solana_dex_liquidity",
+      label: "DEX liquidity",
+      status: liq != null && liq >= 10_000 ? "pass" : liq != null && liq >= 1_000 ? "warn" : "fail",
+      detail: liq != null ? `$${(liq / 1000).toFixed(1)}k on ${pair.dexId ?? "dex"}` : "No liquidity reported",
+      source: "dexscreener",
+    });
+  }
+
+  if (gecko?.ok && gecko.reserveUsd != null) {
+    evidence.push({
+      id: "solana_gecko_reserve",
+      label: "GeckoTerminal reserve",
+      status: gecko.reserveUsd >= 10_000 ? "pass" : gecko.reserveUsd >= 1_000 ? "warn" : "fail",
+      detail: `$${gecko.reserveUsd.toFixed(0)} pool reserve`,
+      source: "geckoterminal",
+    });
+  }
+
+  if (rug?.ok) {
+    const score = rug.score;
+    evidence.push({
+      id: "solana_rugcheck_score",
+      label: "RugCheck score",
+      status:
+        score == null ? "info" : score >= 70 ? "pass" : score >= 40 ? "warn" : "fail",
+      detail: score != null ? `Score ${score}/100` : "Score unavailable",
+      source: "rugcheck",
+    });
+
+    if (rug.rugged) {
+      evidence.push({
+        id: "solana_rugcheck_rugged",
+        label: "RugCheck rugged flag",
+        status: "fail",
+        detail: "Token flagged as rugged",
+        source: "rugcheck",
+      });
+    }
+
+    if (rug.mintAuthority) {
+      evidence.push({
+        id: "solana_rugcheck_mint",
+        label: "RugCheck mint authority",
+        status: "warn",
+        detail: `Mint authority: ${rug.mintAuthority}`,
+        source: "rugcheck",
+      });
+    }
+
+    if (rug.freezeAuthority) {
+      evidence.push({
+        id: "solana_rugcheck_freeze",
+        label: "RugCheck freeze authority",
+        status: "warn",
+        detail: `Freeze authority: ${rug.freezeAuthority}`,
+        source: "rugcheck",
+      });
+    }
+
+    for (const risk of rug.risks.slice(0, 6)) {
+      const name = asString(risk.name) ?? asString(risk.level) ?? "risk";
+      const description = asString(risk.description) ?? name;
+      const level = (asString(risk.level) ?? "").toLowerCase();
+      evidence.push({
+        id: `solana_rugcheck_risk_${name}`,
+        label: `RugCheck: ${name}`,
+        status: level.includes("danger") || level.includes("critical") || level.includes("high")
+          ? "fail"
+          : level.includes("warn")
+            ? "warn"
+            : "info",
+        detail: description,
+        source: "rugcheck",
+      });
+    }
+  }
+
+  if (goplus?.ok && goplus.raw) {
+    const isMintable = asString(goplus.raw.is_mintable);
+    const canFreeze = asString(goplus.raw.freezable) ?? asString(goplus.raw.closable);
+    const balanceMutable = asString(goplus.raw.balance_mutable_authority);
+    if (isMintable === "1") {
+      evidence.push({
+        id: "solana_goplus_mintable",
+        label: "GoPlus mintable",
+        status: "warn",
+        detail: "Token reported as mintable",
+        source: "goplus",
+      });
+    }
+    if (canFreeze === "1") {
+      evidence.push({
+        id: "solana_goplus_freezable",
+        label: "GoPlus freezable",
+        status: "warn",
+        detail: "Token accounts may be freezable/closable",
+        source: "goplus",
+      });
+    }
+    if (balanceMutable === "1") {
+      evidence.push({
+        id: "solana_goplus_balance_mutable",
+        label: "GoPlus balance mutable",
+        status: "fail",
+        detail: "Balance mutable authority enabled",
+        source: "goplus",
+      });
+    }
+  }
+
+  if (helius?.ok) {
+    evidence.push({
+      id: "solana_helius_identity",
+      label: "Helius identity",
+      status: "info",
+      detail: [helius.name, helius.symbol].filter(Boolean).join(" / ") || "Asset resolved",
+      source: "helius",
+    });
+  }
+
+  return evidence;
+}
+
+export const solanaAdapter: ChainAdapter = {
+  chain: "solana",
+  displayName: "Solana",
+  nativeSymbol: "SOL",
+  addressExamples: ["So11111111111111111111111111111111111111112"],
+
+  normalizeAddress(address: string) {
+    try {
+      return new PublicKey(address.trim()).toBase58();
+    } catch {
+      return address.trim();
+    }
+  },
+
+  isValidAddress(address: string) {
+    try {
+      const key = new PublicKey(address.trim());
+      return Boolean(key);
+    } catch {
+      return false;
+    }
+  },
+
+  async getTokenIdentity(address: string): Promise<TokenIdentity> {
+    const normalized = this.normalizeAddress(address);
+    const [mint, onchainMeta, metadata, dexPairs, rug, goplus, helius] =
+      await Promise.all([
+        getMintSnapshot(normalized),
+        getOnchainMetadata(normalized),
+        getTokenMetadata("solana", normalized),
+        getDexscreenerPairsByToken("solana", normalized),
+        getRugCheckReport(normalized),
+        getGoPlusTokenSecurity("solana", normalized),
+        getHeliusAsset(normalized),
+      ]);
+
+    const pair = dexPairs[0] ?? null;
+    const gecko = pair?.pairAddress
+      ? await getGeckoTerminalPool("solana", pair.pairAddress)
+      : { ok: false as const, error: "no_pair" };
+
+    const twitter = resolveTokenTwitter({
+      metadata,
+      dexscreener: pair,
+      geckoterminal: gecko.ok ? gecko : null,
+    });
+
+    const icons = uniqueStrings([
+      metadata.iconUrl,
+      helius.iconUrl,
+      pair?.info?.imageUrl,
+      asString(goplus.raw?.image_url),
+      asString(goplus.raw?.token_logo),
+      gecko.ok ? gecko.imageUrl : null,
+    ]);
+
+    return {
+      chain: "solana",
+      address: normalized,
+      network: NETWORK,
+      name:
+        metadata.name ??
+        onchainMeta?.name ??
+        helius.name ??
+        asString(goplus.raw?.token_name) ??
+        pair?.baseToken?.name ??
+        null,
+      symbol:
+        metadata.symbol ??
+        onchainMeta?.symbol ??
+        helius.symbol ??
+        asString(goplus.raw?.token_symbol) ??
+        pair?.baseToken?.symbol ??
+        null,
+      decimals: mint?.decimals ?? metadata.decimals ?? null,
+      iconUrl: icons[0] ?? null,
+      iconUrls: icons,
+      websites: uniqueStrings([
+        ...(metadata.websites ?? []),
+        ...(pair?.info?.websites?.map((w) => w.url) ?? []),
+        gecko.ok ? gecko.website : null,
+      ]),
+      socials: uniqueStrings([
+        ...(metadata.socials ?? []),
+        ...(pair?.info?.socials?.map((s) => s.url) ?? []),
+        gecko.ok ? gecko.twitter : null,
+        gecko.ok ? gecko.telegram : null,
+        gecko.ok ? gecko.discord : null,
+      ]),
+      twitterUrl: twitter.twitterUrl,
+      twitterHandle: twitter.twitterHandle,
+      hasMintAuthority: Boolean(mint?.mintAuthority),
+      hasFreezeAuthority: Boolean(mint?.freezeAuthority),
+      mintAuthority: mint?.mintAuthority ?? rug.mintAuthority ?? null,
+      freezeAuthority: mint?.freezeAuthority ?? rug.freezeAuthority ?? null,
+      updateAuthority: onchainMeta?.updateAuthority ?? metadata.updateAuthority ?? null,
+      metadataMutable: onchainMeta?.isMutable ?? metadata.isMutable,
+      metadataUri: onchainMeta?.uri ?? metadata.uri ?? helius.metadataUri ?? null,
+      isInitialized: mint?.isInitialized ?? null,
+      tokenProgram: await detectTokenProgram(normalized),
+      riskFlags: uniqueStrings([
+        mint?.mintAuthority ? "mint_authority_active" : null,
+        mint?.freezeAuthority ? "freeze_authority_active" : null,
+        onchainMeta?.isMutable ? "metadata_mutable" : null,
+        rug.rugged ? "rugcheck_rugged" : null,
+      ]),
+    };
+  },
+
+  async getTokenomics(address: string): Promise<TokenomicsSnapshot> {
+    const normalized = this.normalizeAddress(address);
+    const [mint, dexPairs, rug, holders] = await Promise.all([
+      getMintSnapshot(normalized),
+      getDexscreenerPairsByToken("solana", normalized),
+      getRugCheckReport(normalized),
+      getLargestHolders(normalized),
+    ]);
+
+    const pair = dexPairs[0] ?? null;
+    const gecko = pair?.pairAddress
+      ? await getGeckoTerminalPool("solana", pair.pairAddress)
+      : null;
+
+    const supply =
+      mint && Number(mint.supply) > 0
+        ? Number(mint.supply) / 10 ** mint.decimals
+        : null;
+
+    return {
+      chain: "solana",
+      address: normalized,
+      network: NETWORK,
+      totalSupply: supply,
+      circulatingSupply: supply,
+      priceUsd: asNumber(pair?.priceUsd) ?? (gecko?.ok ? gecko.priceUsd : null),
+      liquidityUsd:
+        asNumber(pair?.liquidity?.usd) ?? (gecko?.ok ? gecko.reserveUsd : null),
+      fdvUsd: asNumber(pair?.fdv) ?? asNumber(pair?.marketCap),
+      volume24hUsd: asNumber(pair?.volume?.h24),
+      pairAddress: pair?.pairAddress ?? null,
+      dexId: pair?.dexId ?? null,
+      holderConcentration: holders ?? (rug.ok ? rug.holderConcentration : null),
+    };
+  },
+
+  async getScanEvidence(address: string): Promise<ScanEvidence[]> {
+    const normalized = this.normalizeAddress(address);
+    const [mint, metadata, dexPairs, rug, goplus, helius] = await Promise.all([
+      getMintSnapshot(normalized),
+      getTokenMetadata("solana", normalized),
+      getDexscreenerPairsByToken("solana", normalized),
+      getRugCheckReport(normalized),
+      getGoPlusTokenSecurity("solana", normalized),
+      getHeliusAsset(normalized),
+    ]);
+
+    const pair = dexPairs[0] ?? null;
+    const gecko = pair?.pairAddress
+      ? await getGeckoTerminalPool("solana", pair.pairAddress)
+      : { ok: false as const, error: "no_pair" };
+
+    return buildEvidence({
+      mint,
+      metadata,
+      dexscreener: pair,
+      gecko,
+      rugcheck: rug,
+      goplus,
+      helius,
+    });
+  },
+};
