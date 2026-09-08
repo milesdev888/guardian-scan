@@ -12,9 +12,9 @@ import { cn } from "@/lib/utils";
 
 /**
  * Opens X compose intent with grade/score + scan URL (no price/hashtag spam).
- * When a known handle exists, offers a Tag chip — ON by default only for
+ * When a known handle exists, offers a Tag chip - ON by default only for
  * token-metadata sources; OFF for Dex/Gecko profile data.
- * Card unfurl comes from report-page OG tags → /api/card/<mint>/og.png.
+ * Card unfurl comes from report-page OG tags -> /api/card/<mint>/og.png.
  */
 export function ShareOnXButton({
   address,
@@ -22,35 +22,55 @@ export function ShareOnXButton({
   score,
   twitterHandle = null,
   twitterHandleSource = null,
+  emphasis = "secondary",
+  shareVerifyUrl,
+  badgeSerial,
 }: {
   address: string;
   grade: Grade;
   score: number | null | undefined;
   twitterHandle?: string | null;
   twitterHandleSource?: TwitterHandleSource | null;
+  /** Badged reports: Share leads (primary). Qualifying buy path: Share is secondary. */
+  emphasis?: "primary" | "secondary";
+  /** When badged, share the verify URL so the medallion/seal card unfurls. */
+  shareVerifyUrl?: string;
+  badgeSerial?: string;
 }) {
   const scanOrigin = (
     process.env.NEXT_PUBLIC_SCAN_ORIGIN || "https://scan.cyre.dev"
   ).replace(/\/$/, "");
   const reportUrl = `${scanOrigin}/app?address=${encodeURIComponent(address)}`;
+  const shareUrl = shareVerifyUrl || reportUrl;
   const scoreText =
-    typeof score === "number" && Number.isFinite(score) ? String(Math.round(score)) : "—";
+    typeof score === "number" && Number.isFinite(score) ? String(Math.round(score)) : "-";
 
   const handle = twitterHandle && twitterHandle.startsWith("@") ? twitterHandle : null;
   const canTag = Boolean(handle);
   const [tagOn, setTagOn] = useState(() => twitterTagDefaultOn(twitterHandleSource));
 
-  const shareText = useMemo(
-    () =>
-      composeShareOnXText({
-        grade,
-        scoreText,
-        reportUrl,
-        tagHandle: handle,
-        tagEnabled: canTag && tagOn,
-      }),
-    [grade, scoreText, reportUrl, handle, canTag, tagOn],
-  );
+  const shareText = useMemo(() => {
+    if (badgeSerial) {
+      const base = `Guardian Verified \u00b7 ${badgeSerial}\n${shareUrl}`;
+      if (canTag && tagOn && handle) return `${base}\n${handle}`;
+      return base;
+    }
+    return composeShareOnXText({
+      grade,
+      scoreText,
+      reportUrl: shareUrl,
+      tagHandle: handle,
+      tagEnabled: canTag && tagOn,
+    });
+  }, [
+    badgeSerial,
+    shareUrl,
+    canTag,
+    tagOn,
+    handle,
+    grade,
+    scoreText,
+  ]);
   const shareHref = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}`;
 
   return (
@@ -59,7 +79,11 @@ export function ShareOnXButton({
         href={shareHref}
         target="_blank"
         rel="noreferrer"
-        className={cn(buttonVariants({ variant: "outline" }), "h-9 rounded-xl px-3 text-xs")}
+        className={cn(
+          buttonVariants({ variant: emphasis === "primary" ? "default" : "outline" }),
+          "h-9 rounded-xl px-3 text-xs",
+          emphasis === "primary" ? "font-semibold" : null,
+        )}
       >
         Share on X
       </a>

@@ -18,8 +18,8 @@ const BADGE_API =
   process.env.NEXT_PUBLIC_GUARDIAN_BADGE_API || "https://cyre.dev/api/badge/verify";
 
 /**
- * Gold seal — bottom-right of the scan report ONLY when a VALID badge exists.
- * No badge → render nothing. Serial links to the verify page.
+ * Gold seal - bottom-right of the scan report ONLY when a VALID badge exists.
+ * No badge -> render nothing. Serial links to the verify page.
  */
 export function BadgeSealCorner({ mint }: { mint: string }) {
   const [data, setData] = useState<BadgeLookup | null>(null);
@@ -51,7 +51,7 @@ export function BadgeSealCorner({ mint }: { mint: string }) {
     data.verifyUrl || `https://cyre.dev/verify/${encodeURIComponent(data.badge.serial)}`;
   const seal =
     data.sealUrl ||
-    `https://cyre.dev/api/seal/${encodeURIComponent(data.badge.serial)}/og.png`;
+    `https://cyre.dev/api/seal/${encodeURIComponent(data.badge.serial)}/ui.png`;
   const path = data.badge.pathLabel || data.badge.qualifyPath || "Badge";
 
   return (
@@ -60,7 +60,7 @@ export function BadgeSealCorner({ mint }: { mint: string }) {
       target="_blank"
       rel="noreferrer"
       className="pointer-events-auto absolute right-3 bottom-3 z-10 flex flex-col items-center gap-1 no-underline"
-      title={`Guardian ${path} · ${data.badge.serial}`}
+      title={`Guardian ${path} | ${data.badge.serial}`}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
@@ -68,7 +68,7 @@ export function BadgeSealCorner({ mint }: { mint: string }) {
         alt={`Guardian ${path} seal`}
         width={72}
         height={72}
-        className="drop-shadow-[0_6px_16px_rgba(0,0,0,0.45)]"
+        className="bg-transparent object-contain drop-shadow-[0_6px_16px_rgba(0,0,0,0.45)]"
       />
       <span className="font-mono text-[10px] tracking-wide text-amber-300/90">
         {data.badge.serial}
