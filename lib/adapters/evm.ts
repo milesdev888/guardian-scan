@@ -1,1 +1,1 @@
-LOAD_FROM_DISK
+{{file:/workspace/guardian-scan/lib/adapters/evm.ts}}
