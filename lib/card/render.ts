@@ -7,6 +7,11 @@ import { createCanvas, loadImage, GlobalFonts, type SKRSContext2D } from "@napi-
 import QRCode from "qrcode";
 import type { ShareCardModel } from "@/lib/card/model";
 import { chipColors } from "@/lib/card/chips";
+import {
+  AA_PLATINUM,
+  applyAaPlatinumCanvasFill,
+  clearCanvasTextShadow,
+} from "@/lib/guardian/aa-platinum";
 
 export const CARD_WIDTH = 1600;
 export const CARD_HEIGHT = 1067;
@@ -216,25 +221,38 @@ export async function renderShareCardPng(model: ShareCardModel): Promise<Buffer>
   ctx.font = `500 22px ${FONT_UI}`;
   ctx.fillText(model.chainName.toUpperCase(), textLeft, 206);
 
-  // Grade line
+  // Grade line — AA uses shared metallic platinum treatment (serif + vertical sheen).
+  const aaExtra = model.grade === "AA" ? 28 : 0;
   if (model.grade === "AA") {
-    const g = ctx.createLinearGradient(88, 280, 720, 330);
-    g.addColorStop(0, "#F7F8FA");
-    g.addColorStop(0.45, "#E5E4E2");
-    g.addColorStop(1, "#B8BEC8");
-    ctx.fillStyle = g;
+    const gradeY = 320;
+    const aaLabel = "Grade AA";
+    ctx.font = `700 44px ${FONT_SERIF}`;
+    applyAaPlatinumCanvasFill(ctx, 88, gradeY - 36, gradeY + 4);
+    ctx.fillText(aaLabel, 88, gradeY);
+    clearCanvasTextShadow(ctx);
+
+    const aaWidth = ctx.measureText(aaLabel).width;
+    ctx.fillStyle = "#8B95A3";
+    ctx.font = `600 36px ${FONT_UI}`;
+    const rest = model.gradeLine.replace(/^Grade AA\s*/, " ");
+    ctx.fillText(rest, 88 + aaWidth, gradeY);
+
+    ctx.font = `500 18px ${FONT_SERIF}`;
+    applyAaPlatinumCanvasFill(ctx, 88, gradeY + 8, gradeY + 28);
+    ctx.fillText(AA_PLATINUM.wordmark, 88, gradeY + 26);
+    clearCanvasTextShadow(ctx);
   } else {
     ctx.fillStyle = model.gradeColor;
+    ctx.font = `700 44px ${FONT_UI}`;
+    ctx.fillText(model.gradeLine, 88, 320);
   }
-  ctx.font = `700 44px ${FONT_UI}`;
-  ctx.fillText(model.gradeLine, 88, 320);
 
   // LP line
   const lpColor = lpToneColor(model.lp.tone);
-  drawLockIcon(ctx, 88, 360, lpColor, model.lp.icon === "lock-open");
+  drawLockIcon(ctx, 88, 360 + aaExtra, lpColor, model.lp.icon === "lock-open");
   ctx.fillStyle = lpColor;
   ctx.font = `600 30px ${FONT_UI}`;
-  ctx.fillText(model.lp.text, 120, 386);
+  ctx.fillText(model.lp.text, 120, 386 + aaExtra);
 
   // Full mint monospace
   ctx.fillStyle = "#A8B0BC";
