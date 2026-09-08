@@ -132,6 +132,19 @@ async function main() {
   assert.equal(model.lp.text, "LP PERMANENT · 100% locked");
   assert.equal(model.showMedallion, true);
 
+  // Byte-exact CA — mandatory (visual target had AI-garbled digit 1 vs lowercase i)
+  assert.equal(model.mint.length, C7_MINT.length);
+  assert.equal(Buffer.from(model.mint, "utf8").compare(Buffer.from(C7_MINT, "utf8")), 0);
+  for (let i = 0; i < C7_MINT.length; i++) {
+    assert.equal(
+      model.mint.charCodeAt(i),
+      C7_MINT.charCodeAt(i),
+      `mint mismatch at index ${i}: got U+${model.mint.charCodeAt(i).toString(16)} want U+${C7_MINT.charCodeAt(i).toString(16)}`,
+    );
+  }
+  assert.equal(model.mint, "979sitxCjWFPdAsrF2ybKNENwFcpiHDwaAasC5Xa5qww");
+  assert.notEqual(model.mint, "979sitxCjWFPdAsrF2ybKNENwFcp1HDwaAasC5Xa5qww"); // garbled visual
+
   // Fingerprint strings must equal stored fields exactly (no URL param pollution)
   const fp = cardTextFingerprint(model);
   assert.ok(fp.includes(report.token.address));
@@ -139,6 +152,9 @@ async function main() {
   assert.ok(fp.includes("$C7"));
   assert.ok(fp.every((s) => typeof s === "string" && !s.includes("undefined")));
   assert.ok(!fp.some((s) => /NaN/.test(s)));
+  // "secured" banned — use "locked"
+  assert.ok(!fp.some((s) => /secured/i.test(s)), `secured banned in painted strings: ${fp.join(" | ")}`);
+  assert.ok(!/secured/i.test(model.lp.text));
 }
 
 // ——— (2a) A badged token ———
