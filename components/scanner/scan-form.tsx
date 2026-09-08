@@ -1,7 +1,7 @@
 import { AddressInput } from "@/components/scanner/address-input";
 import { ChainBillboard } from "@/components/scanner/chain-billboard";
 import { ScanResultView } from "@/components/scanner/report-view";
-import { ShareOnXButton } from "@/components/scanner/share-on-x";
+import { ReportActionBar } from "@/components/scanner/report-action-bar";
 import { buttonVariants } from "@/components/ui/button";
 import { detectFamily } from "@/lib/chains/detect";
 import type { ScanResponse, XrplIssuance } from "@/lib/guardian/types";
@@ -33,7 +33,7 @@ export function ScanForm({
         </h1>
         <p className="max-w-2xl text-sm text-muted-foreground sm:text-base">
           No chain dropdown. Paste a mint, 0x address, or XRPL classic address starting with r. Base58 is
-          Solana. 0x plus 40 hex is EVM. r… with a valid checksum is XRPL.
+          Solana. 0x plus 40 hex is EVM. r\u2026 with a valid checksum is XRPL.
         </p>
       </div>
 
@@ -72,16 +72,14 @@ export function ScanForm({
         ) : null}
         {result?.kind === "report" && activeReport ? (
           <div className="space-y-4">
-            <div className="flex flex-wrap gap-2">
-              <ShareOnXButton
-                key={`${activeReport.token.address}:${activeReport.token.twitterHandle ?? ""}:${activeReport.token.twitterHandleSource ?? ""}`}
-                address={activeReport.token.address}
-                grade={activeReport.grade}
-                score={activeReport.score}
-                twitterHandle={activeReport.token.twitterHandle}
-                twitterHandleSource={activeReport.token.twitterHandleSource}
-              />
-            </div>
+            <ReportActionBar
+              key={`${activeReport.token.address}:${activeReport.token.twitterHandle ?? ""}`}
+              mint={activeReport.token.address}
+              grade={activeReport.grade}
+              score={activeReport.score}
+              twitterHandle={activeReport.token.twitterHandle}
+              twitterHandleSource={activeReport.token.twitterHandleSource}
+            />
             <ScanResultView result={result} activeChain={chain} />
           </div>
         ) : null}
@@ -135,7 +133,7 @@ function EmptyIntro() {
       {[
         {
           title: "One paste box, six chains",
-          body: "Solana, Ethereum, Base, Arbitrum, Robinhood Chain, and XRPL. The row under the box is a billboard — it never gates the scan.",
+          body: "Solana, Ethereum, Base, Arbitrum, Robinhood Chain, and XRPL. The row under the box is a billboard \u2014 it never gates the scan.",
         },
         {
           title: "XRPL is not EVM",

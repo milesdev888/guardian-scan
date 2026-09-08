@@ -22,13 +22,13 @@ const QUALIFY_API =
   process.env.NEXT_PUBLIC_GUARDIAN_QUALIFY_API || "https://cyre.dev/api/badge/qualify";
 const SITE = (process.env.NEXT_PUBLIC_GUARDIAN_SITE_URL || "https://cyre.dev").replace(/\/$/, "");
 
-const BUY_LABEL = "Get Guardian Verified — $25";
+const BUY_LABEL = "Get Guardian Verified \u2014 $25";
 
 /**
  * Report action row:
- * - Qualifying + unissued → gold PRIMARY buy, then Share on X (secondary)
- * - Non-qualifying → Share only (no buy)
- * - Already badged → Share on X leads (primary), buy disappears
+ * - Qualifying + unissued \u2192 gold PRIMARY buy, then Share on X (secondary)
+ * - Non-qualifying \u2192 Share only (no buy)
+ * - Already badged \u2192 Share on X leads (primary), buy disappears
  */
 export function ReportActionBar({
   mint,
@@ -76,7 +76,7 @@ export function ReportActionBar({
       href={checkoutUrl}
       className={cn(
         buttonVariants({ variant: "default" }),
-        "h-9 rounded-xl px-4 text-xs font-semibold no-underline",
+        "h-9 rounded-xl border border-[#c9a227]/40 bg-[#c9a227] px-4 text-xs font-semibold text-[#0b1210] no-underline hover:bg-[#d4b03a]",
       )}
     >
       {BUY_LABEL}
