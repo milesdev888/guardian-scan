@@ -11,6 +11,8 @@ export type RugCheckReport = {
     name: string | null;
     symbol: string | null;
     mutable?: boolean;
+    /** Metaplex / off-chain metadata URI when RugCheck returns it. */
+    uri?: string | null;
   };
   mintAuthority: string | null;
   freezeAuthority: string | null;
@@ -121,7 +123,9 @@ export async function fetchRugCheck(
   const result = await fetchJson<Record<string, unknown>>(url, { timeoutMs: 16_000 });
   if (!result.ok) return { data: null, error: result.error };
   const root = result.data;
-  const tokenMeta = asRecord(root.tokenMeta) ?? asRecord(root.fileMeta) ?? {};
+  const tokenMetaRaw = asRecord(root.tokenMeta);
+  const fileMeta = asRecord(root.fileMeta);
+  const tokenMeta = tokenMetaRaw ?? fileMeta ?? {};
   const token = asRecord(root.token);
   const markets = asArray(root.markets);
   const risks = asArray(root.risks).map((item) => {
@@ -150,6 +154,7 @@ export async function fetchRugCheck(
         name: str(tokenMeta.name) ?? str(token?.name),
         symbol: str(tokenMeta.symbol) ?? str(token?.symbol),
         mutable: tokenMeta.mutable === true || tokenMeta.mutable === "true",
+        uri: str(tokenMetaRaw?.uri) ?? str(tokenMeta.uri),
       },
       mintAuthority: str(root.mintAuthority) ?? str(token?.mintAuthority),
       freezeAuthority: str(root.freezeAuthority) ?? str(token?.freezeAuthority),
