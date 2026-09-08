@@ -26,13 +26,13 @@ Serving discipline: same as `/api/seal/<serial>.png` — path param is a lookup 
 
 | Grade | Color | Hex |
 |-------|-------|-----|
-| AA | platinum | `#E5E4E2` (subtle cool sheen) |
+| AA | metallic platinum | mid `#E5E4E2` — vertical metal sheen + “platinum” wordmark; see `lib/guardian/aa-platinum.ts` |
 | A | gold | `#E8C56A` |
 | B | ice | `#5FD0FF` |
 | C | grey | `#9AA4B2` |
 | D / F | amber | `#E09A3C` |
 
-**AA (Platinum)** is awarded only when **all** hold: composite ≥ 90, on-chain age ≥ 365 days, LP tier PERMANENT/BURNED **or** Established-path liquidity (≥$100K across ≥3 independent pools, no majority), mint + freeze authorities revoked, zero fraud flags. Display `Grade AA · composite N/100`. If any gate fails, grade is **A at best** — never round up from score alone.
+**AA (Platinum)** is awarded only when **all** hold: composite ≥ 90, on-chain age ≥ 365 days, LP tier PERMANENT/BURNED **or** Established-path liquidity (≥$100K across ≥3 independent pools, no majority), mint + freeze authorities revoked, zero fraud flags. Display `Grade AA · composite N/100` with the shared metallic platinum treatment (`aa-platinum.ts` / Cyre `brand/aa-platinum.js`). If any gate fails, grade is **A at best** — never round up from score alone.
 
 **Red is reserved exclusively for fraud chips and revocation — never for a low grade.**
 

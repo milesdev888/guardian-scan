@@ -132,3 +132,48 @@
     @apply font-sans;
   }
 }
+
+/**
+ * AA metallic platinum — tokens from lib/guardian/aa-platinum.ts
+ * (peak → hi → mid #E5E4E2 → lo → steel). Shared with share-card canvas + Cyre seal.
+ */
+.grade-aa-tile {
+  --aa-peak: #ffffff;
+  --aa-hi: #f7f8fa;
+  --aa-mid: #e5e4e2;
+  --aa-lo: #7a808a;
+  --aa-steel: #5a6068;
+  --aa-border-peak: #ffffff;
+  --aa-border-hi: #f2f3f5;
+  --aa-border-lo: #a8aeb8;
+  --aa-tile-bg: #0c0d0f;
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--aa-tile-bg), var(--aa-tile-bg)) padding-box,
+    linear-gradient(
+        145deg,
+        var(--aa-border-peak) 0%,
+        var(--aa-border-hi) 38%,
+        var(--aa-mid) 70%,
+        var(--aa-border-lo) 100%
+      )
+      border-box;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
+}
+
+.grade-aa-metal {
+  background-image: linear-gradient(
+    180deg,
+    var(--aa-peak) 0%,
+    var(--aa-hi) 14%,
+    var(--aa-mid) 48%,
+    var(--aa-lo) 82%,
+    var(--aa-steel) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  /* Depth under transparent fill; top stop reads as the 1px light bevel. */
+  filter: drop-shadow(0 1px 0.5px rgb(0 0 0 / 45%));
+}
