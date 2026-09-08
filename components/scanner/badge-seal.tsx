@@ -18,8 +18,8 @@ const BADGE_API =
   process.env.NEXT_PUBLIC_GUARDIAN_BADGE_API || "https://cyre.dev/api/badge/verify";
 
 /**
- * Gold seal \u2014 bottom-right of the scan report ONLY when a VALID badge exists.
- * No badge \u2192 render nothing. Serial links to the verify page.
+ * Gold seal - bottom-right of the scan report ONLY when a VALID badge exists.
+ * No badge -> render nothing. Serial links to the verify page.
  */
 export function BadgeSealCorner({ mint }: { mint: string }) {
   const [data, setData] = useState<BadgeLookup | null>(null);
@@ -60,7 +60,7 @@ export function BadgeSealCorner({ mint }: { mint: string }) {
       target="_blank"
       rel="noreferrer"
       className="pointer-events-auto absolute right-3 bottom-3 z-10 flex flex-col items-center gap-1 no-underline"
-      title={`Guardian ${path} \u00b7 ${data.badge.serial}`}
+      title={`Guardian ${path} | ${data.badge.serial}`}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img

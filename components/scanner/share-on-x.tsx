@@ -12,9 +12,9 @@ import { cn } from "@/lib/utils";
 
 /**
  * Opens X compose intent with grade/score + scan URL (no price/hashtag spam).
- * When a known handle exists, offers a Tag chip \u2014 ON by default only for
+ * When a known handle exists, offers a Tag chip - ON by default only for
  * token-metadata sources; OFF for Dex/Gecko profile data.
- * Card unfurl comes from report-page OG tags \u2192 /api/card/<mint>/og.png.
+ * Card unfurl comes from report-page OG tags -> /api/card/<mint>/og.png.
  */
 export function ShareOnXButton({
   address,
@@ -43,7 +43,7 @@ export function ShareOnXButton({
   const reportUrl = `${scanOrigin}/app?address=${encodeURIComponent(address)}`;
   const shareUrl = shareVerifyUrl || reportUrl;
   const scoreText =
-    typeof score === "number" && Number.isFinite(score) ? String(Math.round(score)) : "\u2014";
+    typeof score === "number" && Number.isFinite(score) ? String(Math.round(score)) : "-";
 
   const handle = twitterHandle && twitterHandle.startsWith("@") ? twitterHandle : null;
   const canTag = Boolean(handle);

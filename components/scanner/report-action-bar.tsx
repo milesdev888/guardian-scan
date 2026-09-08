@@ -26,9 +26,9 @@ const BUY_LABEL = "Get Guardian Verified \u2014 $25";
 
 /**
  * Report action row:
- * - Qualifying + unissued \u2192 gold PRIMARY buy, then Share on X (secondary)
- * - Non-qualifying \u2192 Share only (no buy)
- * - Already badged \u2192 Share on X leads (primary), buy disappears
+ * - Qualifying + unissued -> gold PRIMARY buy, then Share on X (secondary)
+ * - Non-qualifying -> Share only (no buy)
+ * - Already badged -> Share on X leads (primary), buy disappears
  */
 export function ReportActionBar({
   mint,
