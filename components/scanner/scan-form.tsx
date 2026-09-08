@@ -74,9 +74,12 @@ export function ScanForm({
           <div className="space-y-4">
             <div className="flex flex-wrap gap-2">
               <ShareOnXButton
+                key={`${activeReport.token.address}:${activeReport.token.twitterHandle ?? ""}:${activeReport.token.twitterHandleSource ?? ""}`}
                 address={activeReport.token.address}
                 grade={activeReport.grade}
                 score={activeReport.score}
+                twitterHandle={activeReport.token.twitterHandle}
+                twitterHandleSource={activeReport.token.twitterHandleSource}
               />
             </div>
             <ScanResultView result={result} activeChain={chain} />

@@ -13,7 +13,22 @@ export type DexPair = {
   marketCap: number | null;
   pairCreatedAt: number | null;
   imageUrl: string | null;
+  /** DexScreener token-profile twitter URL when present on `info.socials`. */
+  twitterUrl: string | null;
 };
+
+function twitterFromInfo(info: Record<string, unknown> | null): string | null {
+  if (!info) return null;
+  const socials = asArray(info.socials);
+  for (const item of socials) {
+    const row = asRecord(item) ?? {};
+    const type = (str(row.type) ?? "").toLowerCase();
+    if (type === "twitter" || type === "x") {
+      return str(row.url) ?? str(row.handle);
+    }
+  }
+  return null;
+}
 
 function parsePair(raw: unknown): DexPair | null {
   const row = asRecord(raw);
@@ -44,6 +59,7 @@ function parsePair(raw: unknown): DexPair | null {
     marketCap: num(row.marketCap),
     pairCreatedAt: num(row.pairCreatedAt),
     imageUrl: str(info?.imageUrl),
+    twitterUrl: twitterFromInfo(info),
   };
 }
 
@@ -103,6 +119,7 @@ export function identityFromPairs(pairs: DexPair[], tokenAddress: string) {
         name: side.name,
         symbol: side.symbol,
         imageUrl: pair.imageUrl,
+        twitterUrl: pair.twitterUrl,
       };
     }
   }
@@ -111,5 +128,15 @@ export function identityFromPairs(pairs: DexPair[], tokenAddress: string) {
     name: first?.baseToken.name ?? null,
     symbol: first?.baseToken.symbol ?? null,
     imageUrl: first?.imageUrl ?? null,
+    twitterUrl: first?.twitterUrl ?? null,
   };
+}
+
+/** First DexScreener profile twitter URL across pairs (deepest liquidity first). */
+export function twitterFromPairs(pairs: DexPair[]): string | null {
+  const sorted = [...pairs].sort((a, b) => (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0));
+  for (const pair of sorted) {
+    if (pair.twitterUrl) return pair.twitterUrl;
+  }
+  return null;
 }

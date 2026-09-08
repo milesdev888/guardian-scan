@@ -17,6 +17,7 @@ import { fetchDexToken, filterPairsForChain, identityFromPairs, pickCanonicalPai
 import { fetchExplorerCreation, fetchExplorerSource, fetchFirstTransactionTime } from "@/lib/sources/explorer";
 import { collectPrivileges, fetchGoPlusEvm, percentFromGoPlus } from "@/lib/sources/goplus";
 import { fetchHoneypot } from "@/lib/sources/honeypot";
+import { resolveTokenTwitter } from "@/lib/guardian/resolve-twitter";
 import {
   detectSelectors,
   getBytecode,
@@ -96,6 +97,11 @@ export class EvmAdapter implements ChainAdapter {
     const chainPairs = filterPairsForChain(dexResult.pairs, evm.dexScreenerChain);
     const pairs = chainPairs.length ? chainPairs : dexResult.pairs;
     const identity = identityFromPairs(pairs, lower);
+    const twitterPromise = resolveTokenTwitter({
+      chainId: evm.id,
+      address: lower,
+      pairs,
+    });
     const onchainMeta = await readErc20Meta(evm, lower).catch(() => ({
       name: null,
       symbol: null,
@@ -606,6 +612,10 @@ export class EvmAdapter implements ChainAdapter {
       patterns,
     });
 
+    const twitter = await twitterPromise;
+    if (twitter) note("twitter-handle", true);
+    else note("twitter-handle", false, "no known handle");
+
     return {
       schema: "guardian.report.v2",
       scannedAt: new Date().toISOString(),
@@ -621,6 +631,8 @@ export class EvmAdapter implements ChainAdapter {
         symbol,
         decimals: onchainMeta.decimals,
         imageUrl: identity.imageUrl,
+        twitterHandle: twitter?.handle ?? null,
+        twitterHandleSource: twitter?.source ?? null,
       },
       grade,
       score,

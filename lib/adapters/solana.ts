@@ -28,6 +28,7 @@ import { fetchGoPlusSolana } from "@/lib/sources/goplus";
 import { fetchRugCheck, labelFromKnownAccount } from "@/lib/sources/rugcheck";
 import { parseRugCheckMarkets } from "@/lib/sources/rugcheck-markets";
 import { solanaAccountExists } from "@/lib/sources/rpc";
+import { resolveTokenTwitter } from "@/lib/guardian/resolve-twitter";
 import {
   getAccountOwner,
   getMultipleAccountOwners,
@@ -110,6 +111,13 @@ export class SolanaAdapter implements ChainAdapter {
     const identity = identityFromPairs(pairs.length ? pairs : dex.pairs, address);
     const name = rug.data?.tokenMeta.name ?? goplus.data?.token_name ?? identity.name;
     const symbol = rug.data?.tokenMeta.symbol ?? goplus.data?.token_symbol ?? identity.symbol;
+
+    const twitterPromise = resolveTokenTwitter({
+      chainId: sol.id,
+      address,
+      metadataUri: rug.data?.tokenMeta.uri,
+      pairs: pairs.length ? pairs : dex.pairs,
+    });
 
     const mintAuth =
       rug.data?.mintAuthority ?? (goplus.data?.mintable?.status === "1" ? "live" : null);
@@ -592,6 +600,10 @@ export class SolanaAdapter implements ChainAdapter {
       patterns,
     });
 
+    const twitter = await twitterPromise;
+    if (twitter) note("twitter-handle", true);
+    else note("twitter-handle", false, "no known handle");
+
     return {
       schema: "guardian.report.v2",
       scannedAt: new Date().toISOString(),
@@ -607,6 +619,8 @@ export class SolanaAdapter implements ChainAdapter {
         symbol,
         decimals: null,
         imageUrl: identity.imageUrl,
+        twitterHandle: twitter?.handle ?? null,
+        twitterHandleSource: twitter?.source ?? null,
       },
       grade,
       score,

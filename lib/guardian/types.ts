@@ -100,6 +100,10 @@ export type TokenIdentity = {
   decimals: number | null;
   imageUrl: string | null;
   currency?: string | null;
+  /** Normalized `@handle` when known from scan sources — never guessed. */
+  twitterHandle?: string | null;
+  /** Where twitterHandle was observed. Drives Tag-chip default. */
+  twitterHandleSource?: "token-metadata" | "dexscreener" | "geckoterminal" | null;
 };
 
 export type LpTier = "BURNED" | "PERMANENT" | "TIMED" | "UNVERIFIED";

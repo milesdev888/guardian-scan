@@ -26,6 +26,7 @@ import {
 } from "@/lib/guardian/grade";
 import { classifyLp, lpCheckFrom, toLpLockInfo } from "@/lib/guardian/lp-tier";
 import { fetchDexToken, filterPairsForChain, identityFromPairs } from "@/lib/sources/dexscreener";
+import { resolveTokenTwitter } from "@/lib/guardian/resolve-twitter";
 import {
   assessBlackhole,
   decodeCurrency,
@@ -163,6 +164,11 @@ export class XRPLAdapter implements ChainAdapter {
 
     const pairs = filterPairsForChain(dex.pairs, "xrpl");
     const identity = identityFromPairs(pairs.length ? pairs : dex.pairs, dexQuery);
+    const twitterPromise = resolveTokenTwitter({
+      chainId: xrpl.id,
+      address: dexQuery,
+      pairs: pairs.length ? pairs : dex.pairs,
+    });
     const symbol = scanningToken ? displayCurrency : null;
     const name = scanningToken
       ? (identity.name && identity.symbol?.toLowerCase() === displayCurrency?.toLowerCase()
@@ -575,6 +581,10 @@ export class XRPLAdapter implements ChainAdapter {
       ? xrplTokenId(address, displayCurrency)
       : address;
 
+    const twitter = await twitterPromise;
+    if (twitter) note("twitter-handle", true);
+    else note("twitter-handle", false, "no known handle");
+
     return {
       schema: "guardian.report.v2",
       scannedAt: new Date().toISOString(),
@@ -591,6 +601,8 @@ export class XRPLAdapter implements ChainAdapter {
         decimals: 15,
         imageUrl: identity.imageUrl,
         currency: displayCurrency,
+        twitterHandle: twitter?.handle ?? null,
+        twitterHandleSource: twitter?.source ?? null,
       },
       grade,
       score,
