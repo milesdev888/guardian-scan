@@ -1,1 +1,1 @@
-{{file:/workspace/guardian-scan/lib/adapters/evm.ts}}
+@/tmp/evm_content_only.ts
