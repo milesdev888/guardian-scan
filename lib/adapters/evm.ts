@@ -135,14 +135,37 @@ export class EvmAdapter implements ChainAdapter {
       url: pair.url,
     }));
 
-    const holders: Holder[] = (goplus?.holders ?? []).slice(0, 10).map((row) => ({
+    const holdersRaw: Holder[] = (goplus?.holders ?? []).slice(0, 10).map((row) => ({
       address: row.address ?? "",
       percent: percentFromGoPlus(row.percent),
       tag: row.tag ?? null,
       locked: row.is_locked === 1 || row.is_locked === "1",
     }));
-
-    const top10 = holders.reduce((sum, row) => sum + (row.percent ?? 0), 0);
+    // Label burns so free-float math can exclude them (same idea as Solana C7 fix).
+    const holders: Holder[] = holdersRaw.map((row) => {
+      const burn = isBurnAddress(row.address) || /burn|dead|blackhole/i.test(row.tag ?? "");
+      return burn
+        ? {
+            ...row,
+            tag: row.tag && /burn|dead|blackhole/i.test(row.tag) ? row.tag : "burn",
+            locked: true,
+          }
+        : row;
+    });
+    const isExcludedHolder = (row: Holder) =>
+      isBurnAddress(row.address) ||
+      /burn|dead|blackhole|lock|escrow|unicrypt|uncx|team\s*finance|locker/i.test(row.tag ?? "");
+    const freeFloatHolders = holders.filter((row) => !isExcludedHolder(row));
+    const rawTop10 = holders.reduce((sum, row) => sum + (row.percent ?? 0), 0);
+    const top10 = freeFloatHolders.reduce((sum, row) => sum + (row.percent ?? 0), 0);
+    const excludedPct = holders
+      .filter((row) => isExcludedHolder(row))
+      .reduce((sum, row) => sum + (row.percent ?? 0), 0);
+    const concentration = {
+      rawTop10: Math.min(100, rawTop10),
+      top10: Math.min(100, top10),
+      excludedPct: Math.min(100, excludedPct),
+    };
     const privileges = collectPrivileges(goplus);
     if (!goplus) {
       if (selectors.mint) privileges.push({ id: "mint", label: "mint", on: true });
@@ -456,24 +479,35 @@ export class EvmAdapter implements ChainAdapter {
             summary: "Top-10 holders were not returned.",
             detail: "GoPlus holder tables are unavailable for this chain or token.",
           })
-        : top10 >= 70
+        : freeFloatHolders.length === 0
           ? check({
               id: "holder_concentration",
               title: "Holder concentration",
-              status: "flag",
-              grade: top10 >= 90 ? "F" : "D",
-              summary: `Top 10 wallets hold ${formatPct(top10)} of supply.`,
-              detail: "Concentration this high means a handful of wallets can move the market. Contracts, locks, and exchanges in the top 10 can change the reading.",
-              evidence: { top10, holders },
-            })
-          : check({
-              id: "holder_concentration",
-              title: "Holder concentration",
               status: "pass",
-              grade: top10 >= 50 ? "B" : "A",
-              summary: `Top 10 wallets hold ${formatPct(top10)} of supply.`,
-              detail: `${holders.length} holders listed. This excludes some LP and burn tags when GoPlus marks them.`,
-            }),
+              grade: "A",
+              summary: "No free-float wallets in the top-10 table.",
+              detail: `Excluded ${formatPct(concentration.excludedPct)} in burn / lock / escrow accounts from free-float math (raw top-10 ${formatPct(concentration.rawTop10)}).`,
+              evidence: { ...concentration, holders },
+            })
+          : top10 >= 70
+            ? check({
+                id: "holder_concentration",
+                title: "Holder concentration",
+                status: "flag",
+                grade: top10 >= 90 ? "F" : "D",
+                summary: `Top free-float wallets hold ${formatPct(top10)} of supply.`,
+                detail: `Raw top-10 ${formatPct(concentration.rawTop10)}; excluded ${formatPct(concentration.excludedPct)} in burns, locks, and escrows (same treatment as Solana free-float).`,
+                evidence: { ...concentration, holders },
+              })
+            : check({
+                id: "holder_concentration",
+                title: "Holder concentration",
+                status: "pass",
+                grade: top10 >= 50 ? "B" : "A",
+                summary: `Top free-float wallets hold ${formatPct(top10)} of supply.`,
+                detail: `${freeFloatHolders.length} free-float accounts scored; burns/locks labeled but excluded (raw top-10 ${formatPct(concentration.rawTop10)}, excluded ${formatPct(concentration.excludedPct)}).`,
+                evidence: { ...concentration, holders },
+              }),
     );
 
     checks.push(
