@@ -14,16 +14,23 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p lib/guardian lib/adapters
-          cat .restore-tmp/grade.part* > lib/guardian/grade.ts
+          test -f .restore-tmp/grade.part00
+          test -f .restore-tmp/grade.part01
+          test -f .restore-tmp/grade.part02
+          test -f .restore-tmp/grade.part03
+          cat .restore-tmp/grade.part00 .restore-tmp/grade.part01 .restore-tmp/grade.part02 .restore-tmp/grade.part03 > lib/guardian/grade.ts
           wc -c lib/guardian/grade.ts
+          test "$(wc -c < lib/guardian/grade.ts)" -gt 10000
           grep -q 'export function majorityShareCeiling' lib/guardian/grade.ts
           grep -q 'maxShare <= shareCeiling' lib/guardian/grade.ts
           ! grep -q PLACEHOLDER lib/guardian/grade.ts
-          if ls .restore-tmp/evm.part* >/dev/null 2>&1; then
-            cat .restore-tmp/evm.part* > lib/adapters/evm.ts
+          if test -f .restore-tmp/evm.part00 && test -f .restore-tmp/evm.part01 && test -f .restore-tmp/evm.part02 && test -f .restore-tmp/evm.part03 && test -f .restore-tmp/evm.part04 && test -f .restore-tmp/evm.part05; then
+            cat .restore-tmp/evm.part00 .restore-tmp/evm.part01 .restore-tmp/evm.part02 .restore-tmp/evm.part03 .restore-tmp/evm.part04 .restore-tmp/evm.part05 > lib/adapters/evm.ts
             wc -c lib/adapters/evm.ts
             grep -q 'pool_age' lib/adapters/evm.ts
             grep -q 'majorityShareCeiling' lib/adapters/evm.ts
+          else
+            echo 'evm parts incomplete — skipping evm.ts'
           fi
       - name: Commit restored files
         run: |
@@ -31,7 +38,7 @@ jobs:
           git config user.name "Cyredev"
           git config user.email "milesfrancisco73@gmail.com"
           git add lib/guardian/grade.ts
-          if [ -f lib/adapters/evm.ts ]; then git add lib/adapters/evm.ts; fi
+          if [ -f lib/adapters/evm.ts ] && grep -q pool_age lib/adapters/evm.ts; then git add lib/adapters/evm.ts; fi
           if git diff --cached --quiet; then echo 'no changes'; else
             git commit -m "fix(scan): restore grade.ts with scaled majority ceiling"
           fi
