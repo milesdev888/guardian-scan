@@ -1,1 +1,1 @@
-PLACEHOLDER_LOAD_FROM_/tmp/mcp-grade-args.json
+@file:///workspace/guardian-scan/lib/guardian/grade.ts
