@@ -1,212 +1,296 @@
-import { createHash } from "node:crypto";
-import { getChain } from "@/lib/chains";
-import { fetchJson } from "@/lib/http";
-import type { CheckResult } from "@/lib/guardian/types";
+import { asArray, asRecord, fetchJson, flag, num, str } from "@/lib/http";
+import type { EvmChainConfig } from "@/lib/guardian/types";
 
-function cacheSeconds(chainId: string): number {
-  return getChain(chainId)?.cacheSeconds.explorer ?? 86_400;
+export type ExplorerSource = {
+  verified: boolean | null;
+  contractName: string | null;
+  proxy: boolean | null;
+  implementation: string | null;
+};
+
+export type ExplorerCreation = {
+  creator: string | null;
+  txHash: string | null;
+  timestamp: number | null;
+};
+
+/** Earliest plausible EVM contract (pre-Frontier buffer). */
+const TS_MIN_MS = Date.parse("2015-01-01T00:00:00Z");
+
+/**
+ * Sanitize explorer / pool timestamps. Rejects hex-as-number garbage
+ * (e.g. Number("0xabc…") → 1e47+) that once made LINK look "1 hours old".
+ */
+export function sanitizeTimestampMs(raw: number | null | undefined): number | null {
+  if (raw == null || !Number.isFinite(raw) || raw <= 0) return null;
+  const ms = raw < 10_000_000_000 ? raw * 1000 : raw;
+  const max = Date.now() + 86_400_000;
+  if (ms < TS_MIN_MS || ms > max) return null;
+  return ms;
 }
 
-/** Coerce explorer timestamps; reject nonsense (hashes, floats that aren't epoch). */
-export function sanitizeTimestampMs(raw: unknown): number | null {
-  if (raw == null || raw === "") return null;
-  let n: number;
-  if (typeof raw === "number") {
-    n = raw;
-  } else if (typeof raw === "string") {
-    const t = raw.trim();
-    if (!t || /^0x/i.test(t) || /[a-f]/i.test(t)) return null;
-    n = Number(t);
-  } else {
-    return null;
+/**
+ * Parse a timestamp from explorer payloads. Never coerces 0x-hashes via Number().
+ * Accepts unix seconds/ms or ISO-8601 strings.
+ */
+export function parseExplorerTimestamp(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (/^0x[0-9a-f]+$/i.test(trimmed)) return null; // hash / address — not a time
+    if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+      return sanitizeTimestampMs(Date.parse(trimmed));
+    }
   }
-  if (!Number.isFinite(n) || n <= 0) return null;
-  // seconds vs ms
-  if (n < 1e12) n *= 1000;
-  // Jan 2015 .. now+1d
-  if (n < 1_420_070_400_000 || n > Date.now() + 86_400_000) return null;
-  return Math.floor(n);
+  const n = num(value);
+  return sanitizeTimestampMs(n);
 }
 
-export function parseExplorerTimestamp(payload: unknown): number | null {
-  if (!payload || typeof payload !== "object") return null;
-  const o = payload as Record<string, unknown>;
-  const result = o.result;
-  if (typeof result === "string" || typeof result === "number") {
-    return sanitizeTimestampMs(result);
+function isBlockscoutHost(explorerApiUrl: string): boolean {
+  return /blockscout\.com/i.test(explorerApiUrl);
+}
+
+function blockscoutOrigin(explorerApiUrl: string): string {
+  try {
+    const u = new URL(explorerApiUrl);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return explorerApiUrl.replace(/\/api\/?$/, "");
   }
-  if (result && typeof result === "object") {
-    const r = result as Record<string, unknown>;
-    return (
-      sanitizeTimestampMs(r.timestamp) ??
-      sanitizeTimestampMs(r.timeStamp) ??
-      sanitizeTimestampMs(r.creation_timestamp) ??
-      sanitizeTimestampMs(r.block_timestamp)
-    );
+}
+
+/**
+ * Blockscout JSON API v2 — preferred for Orbit/Robinhood where classic
+ * `?module=contract&action=getsourcecode` is Cloudflare-403 HTML.
+ */
+async function fetchBlockscoutV2Source(
+  chain: EvmChainConfig,
+  address: string,
+): Promise<{ data: ExplorerSource | null; error?: string }> {
+  const origin = blockscoutOrigin(chain.explorerApiUrl);
+  const addrUrl = `${origin}/api/v2/addresses/${encodeURIComponent(address)}`;
+  const addr = await fetchJson<Record<string, unknown>>(addrUrl, {
+    headers: {
+      accept: "application/json",
+      referer: `${origin}/`,
+      "user-agent":
+        "Mozilla/5.0 (compatible; GuardianScan/2.0; +https://scan.cyre.dev)",
+    },
+  });
+  if (!addr.ok) return { data: null, error: addr.error };
+
+  const verifiedFlag = flag(addr.data.is_verified);
+  // If address payload lacks is_verified, try smart-contracts endpoint.
+  if (verifiedFlag === null) {
+    const scUrl = `${origin}/api/v2/smart-contracts/${encodeURIComponent(address)}`;
+    const sc = await fetchJson<Record<string, unknown>>(scUrl, {
+      headers: {
+        accept: "application/json",
+        referer: `${origin}/`,
+        "user-agent":
+          "Mozilla/5.0 (compatible; GuardianScan/2.0; +https://scan.cyre.dev)",
+      },
+    });
+    if (!sc.ok) return { data: null, error: sc.error };
+    const source = str(sc.data.source_code) ?? "";
+    const verified =
+      flag(sc.data.is_verified) ?? flag(sc.data.is_fully_verified) ?? source.length > 2;
+    return {
+      data: {
+        verified,
+        contractName: str(sc.data.name) ?? str(sc.data.file_path),
+        proxy: Boolean(sc.data.proxy_type) || Boolean(asArray(sc.data.implementations).length),
+        implementation: str(
+          asRecord(asArray(sc.data.implementations)[0])?.address_hash,
+        ),
+      },
+    };
   }
+
+  return {
+    data: {
+      verified: verifiedFlag,
+      contractName: str(addr.data.name),
+      proxy: Boolean(addr.data.proxy_type) || Boolean(addr.data.implementations),
+      implementation: str(addr.data.implementation_address),
+    },
+  };
+}
+
+async function fetchClassicExplorerSource(
+  chain: EvmChainConfig,
+  address: string,
+): Promise<{ data: ExplorerSource | null; error?: string }> {
+  const url = `${chain.explorerApiUrl}?module=contract&action=getsourcecode&address=${address}`;
+  const result = await fetchJson<Record<string, unknown>>(url);
+  if (!result.ok) return { data: null, error: result.error };
+  const row = asRecord(asArray(result.data.result)[0]) ?? asRecord(result.data.result);
+  if (!row) return { data: null, error: "Explorer returned no source payload" };
+  const source = str(row.SourceCode) ?? "";
+  const verified = source.length > 2;
+  const proxyFlag =
+    str(row.Proxy) === "1" || str(row.IsProxy) === "1" || Boolean(str(row.Implementation));
+  return {
+    data: {
+      verified,
+      contractName: str(row.ContractName),
+      proxy: proxyFlag,
+      implementation: str(row.Implementation),
+    },
+  };
+}
+
+export async function fetchExplorerSource(
+  chain: EvmChainConfig,
+  address: string,
+): Promise<{ data: ExplorerSource | null; error?: string }> {
+  // Robinhood / Blockscout Orbit: classic module API returns Cloudflare HTML 403.
+  // Prefer JSON API v2 first on Blockscout hosts.
+  if (isBlockscoutHost(chain.explorerApiUrl) || chain.id === "robinhood") {
+    const v2 = await fetchBlockscoutV2Source(chain, address);
+    if (v2.data) return v2;
+    // Fall through to classic only if v2 soft-failed without hard HTTP error payload.
+    if (v2.error && !/HTTP 403|Just a moment/i.test(v2.error)) {
+      // try classic as secondary
+    } else if (v2.error) {
+      // Still try classic once; if both CF-blocked, surface the clearer error.
+      const classic = await fetchClassicExplorerSource(chain, address);
+      if (classic.data) return classic;
+      return { data: null, error: v2.error };
+    }
+  }
+
+  const classic = await fetchClassicExplorerSource(chain, address);
+  if (classic.data || !isBlockscoutHost(chain.explorerApiUrl)) return classic;
+
+  // Classic failed on Blockscout — last chance v2.
+  const v2 = await fetchBlockscoutV2Source(chain, address);
+  if (v2.data) return v2;
+  return {
+    data: null,
+    error: classic.error || v2.error || "Explorer verification unavailable",
+  };
+}
+
+async function timestampFromBlockscoutTx(
+  origin: string,
+  txHash: string,
+): Promise<number | null> {
+  const url = `${origin}/api/v2/transactions/${encodeURIComponent(txHash)}`;
+  const result = await fetchJson<Record<string, unknown>>(url, {
+    headers: {
+      accept: "application/json",
+      referer: `${origin}/`,
+      "user-agent":
+        "Mozilla/5.0 (compatible; GuardianScan/2.0; +https://scan.cyre.dev)",
+    },
+  });
+  if (!result.ok) return null;
   return (
-    sanitizeTimestampMs(o.timestamp) ??
-    sanitizeTimestampMs(o.timeStamp) ??
-    sanitizeTimestampMs(o.creation_timestamp)
+    parseExplorerTimestamp(result.data.timestamp) ??
+    parseExplorerTimestamp(asRecord(result.data.block)?.timestamp)
   );
 }
 
-async function getblockrewardTimestamp(
-  base: string,
-  blockNumber: number | string,
-  cacheSec: number,
+async function timestampFromClassicBlock(
+  chain: EvmChainConfig,
+  blockNumber: number,
 ): Promise<number | null> {
-  const bn = typeof blockNumber === "string" ? blockNumber.replace(/^0x/i, "") : String(blockNumber);
-  if (!/^\d+$/.test(bn)) return null;
-  try {
-    const reward = await fetchJson<{ result?: { timeStamp?: string } }>(
-      `${base}?module=block&action=getblockreward&blockno=${bn}`,
-      { cacheTtlSeconds: cacheSec, timeoutMs: 12_000 },
-    );
-    return sanitizeTimestampMs(reward.result?.timeStamp);
-  } catch {
-    return null;
-  }
+  const url = `${chain.explorerApiUrl}?module=block&action=getblockreward&blockno=${blockNumber}`;
+  const result = await fetchJson<Record<string, unknown>>(url);
+  if (!result.ok) return null;
+  const row = asRecord(result.data.result) ?? result.data;
+  return parseExplorerTimestamp(asRecord(row)?.timeStamp) ?? parseExplorerTimestamp(asRecord(row)?.timestamp);
 }
 
-async function resolveBlockscoutCreation(
-  base: string,
+/**
+ * Contract-creation age from the explorer — never DexScreener pool age.
+ * Blockscout address payloads expose creation_transaction_hash without a
+ * timestamp; we resolve time via the creation tx (or classic blockNumber).
+ */
+export async function fetchExplorerCreation(
+  chain: EvmChainConfig,
   address: string,
-  cacheSec: number,
-): Promise<number | null> {
-  try {
-    const data = await fetchJson<{
-      creation_transaction_hash?: string;
-      creation_status?: string;
-      creation_transaction?: { timestamp?: string; block_number?: number };
-      block_number?: number | null;
-    }>(`${base}/api/v2/addresses/${address}`, {
-      cacheTtlSeconds: cacheSec,
-      timeoutMs: 12_000,
+): Promise<{ data: ExplorerCreation | null; error?: string }> {
+  if (isBlockscoutHost(chain.explorerApiUrl) || chain.id === "robinhood") {
+    const origin = blockscoutOrigin(chain.explorerApiUrl);
+    const url = `${origin}/api/v2/addresses/${encodeURIComponent(address)}`;
+    const result = await fetchJson<Record<string, unknown>>(url, {
+      headers: {
+        accept: "application/json",
+        referer: `${origin}/`,
+        "user-agent":
+          "Mozilla/5.0 (compatible; GuardianScan/2.0; +https://scan.cyre.dev)",
+      },
     });
+    if (result.ok) {
+      const creator =
+        str(result.data.creator_address_hash) ??
+        str(asRecord(result.data.creator_address_hash)?.hash) ??
+        null;
+      const txHash =
+        str(result.data.creation_transaction_hash) ??
+        str(result.data.creation_tx_hash) ??
+        null;
+      let timestamp =
+        parseExplorerTimestamp(result.data.timestamp) ??
+        parseExplorerTimestamp(asRecord(result.data.block)?.timestamp);
 
-    const nested = sanitizeTimestampMs(data.creation_transaction?.timestamp);
-    if (nested) return nested;
+      // NEVER num(creation_transaction_hash) — hex hashes coerce to 1e47+ floats.
+      if (timestamp == null && txHash) {
+        timestamp = await timestampFromBlockscoutTx(origin, txHash);
+      }
 
-    const txHash = data.creation_transaction_hash;
-    if (typeof txHash === "string" && /^0x[a-fA-F0-9]{64}$/.test(txHash)) {
-      try {
-        const tx = await fetchJson<{ timestamp?: string; block?: number }>(
-          `${base}/api/v2/transactions/${txHash}`,
-          { cacheTtlSeconds: cacheSec, timeoutMs: 12_000 },
-        );
-        const fromTx = sanitizeTimestampMs(tx.timestamp);
-        if (fromTx) return fromTx;
-        if (tx.block != null) {
-          const fromBlock = await getblockrewardTimestamp(base, tx.block, cacheSec);
-          if (fromBlock) return fromBlock;
-        }
-      } catch {
-        /* fall through */
+      if (creator || txHash || timestamp) {
+        return { data: { creator, txHash, timestamp } };
       }
     }
-
-    if (data.creation_transaction?.block_number != null) {
-      const fromCreationBlock = await getblockrewardTimestamp(
-        base,
-        data.creation_transaction.block_number,
-        cacheSec,
-      );
-      if (fromCreationBlock) return fromCreationBlock;
-    }
-
-    if (data.block_number != null) {
-      return getblockrewardTimestamp(base, data.block_number, cacheSec);
-    }
-  } catch {
-    return null;
   }
-  return null;
+
+  const url = `${chain.explorerApiUrl}?module=contract&action=getcontractcreation&contractaddresses=${address}`;
+  const result = await fetchJson<Record<string, unknown>>(url);
+  if (!result.ok) return { data: null, error: result.error };
+  const row = asRecord(asArray(result.data.result)[0]) ?? asRecord(result.data.result);
+  if (!row) return { data: null, error: "Explorer returned no creation payload" };
+
+  const creator = str(row.contractCreator) ?? str(row.creatorAddress);
+  const txHash = str(row.txHash) ?? str(row.txnHash);
+  let timestamp =
+    parseExplorerTimestamp(row.timestamp) ?? parseExplorerTimestamp(row.timeStamp);
+
+  if (timestamp == null) {
+    const blockNo = num(row.blockNumber) ?? num(row.blockNumber);
+    if (blockNo != null && blockNo > 0 && blockNo < 1e12) {
+      timestamp = await timestampFromClassicBlock(chain, Math.trunc(blockNo));
+    }
+  }
+
+  // Last resort: Blockscout tx endpoint when classic gave a hash but no time
+  if (timestamp == null && txHash && isBlockscoutHost(chain.explorerApiUrl)) {
+    timestamp = await timestampFromBlockscoutTx(blockscoutOrigin(chain.explorerApiUrl), txHash);
+  }
+
+  return {
+    data: {
+      creator,
+      txHash,
+      timestamp,
+    },
+  };
 }
 
-export async function fetchExplorerCreation(
-  chainId: string,
+export async function fetchFirstTransactionTime(
+  chain: EvmChainConfig,
   address: string,
-): Promise<CheckResult | null> {
-  const chain = getChain(chainId);
-  if (!chain?.explorerApi) return null;
-  const cacheSec = cacheSeconds(chainId);
-  const base = chain.explorerApi.replace(/\/$/, "");
-
-  try {
-    if (chain.explorerKind === "blockscout") {
-      const ts = await resolveBlockscoutCreation(base, address, cacheSec);
-      if (ts == null) return null;
-      return {
-        id: "contract_age",
-        status: "pass",
-        score: 1,
-        evidence: { createdAt: new Date(ts).toISOString(), source: "blockscout" },
-        summary: "Contract creation time from Blockscout",
-      };
-    }
-
-    const url = `${base}?module=contract&action=getcontractcreation&contractaddresses=${address}`;
-    const data = await fetchJson<{ result?: Array<{ timestamp?: string; timeStamp?: string; blockNumber?: string }> }>(
-      url,
-      { cacheTtlSeconds: cacheSec, timeoutMs: 12_000 },
-    );
-    const row = data.result?.[0];
-    if (!row) return null;
-    let ts =
-      sanitizeTimestampMs(row.timestamp) ?? sanitizeTimestampMs(row.timeStamp);
-    if (ts == null && row.blockNumber) {
-      ts = await getblockrewardTimestamp(base, row.blockNumber, cacheSec);
-    }
-    if (ts == null) return null;
-    return {
-      id: "contract_age",
-      status: "pass",
-      score: 1,
-      evidence: { createdAt: new Date(ts).toISOString(), source: "etherscan-compat" },
-      summary: "Contract creation time from explorer",
-    };
-  } catch {
-    return null;
-  }
-}
-
-export async function fetchExplorerTxCount(
-  chainId: string,
-  address: string,
-): Promise<CheckResult | null> {
-  const chain = getChain(chainId);
-  if (!chain?.explorerApi) return null;
-  const cacheSec = cacheSeconds(chainId);
-  try {
-    const base = chain.explorerApi.replace(/\/$/, "");
-    let count = 0;
-    if (chain.explorerKind === "blockscout") {
-      const data = await fetchJson<{ transactions_count?: number }>(`${base}/api/v2/addresses/${address}`, {
-        cacheTtlSeconds: Math.min(cacheSec, 3600),
-        timeoutMs: 12_000,
-      });
-      count = Number(data.transactions_count ?? 0);
-    } else {
-      const url = `${base}?module=account&action=txlist&address=${address}&startblock=0&endblock=99999999&page=1&offset=1&sort=asc`;
-      const data = await fetchJson<{ result?: unknown[] }>(url, {
-        cacheTtlSeconds: Math.min(cacheSec, 3600),
-        timeoutMs: 12_000,
-      });
-      count = Array.isArray(data.result) ? data.result.length : 0;
-    }
-    return {
-      id: "tx_activity",
-      status: count > 0 ? "pass" : "warn",
-      score: count > 10 ? 1 : count > 0 ? 0.6 : 0.2,
-      evidence: { sampleSize: count },
-      summary: count > 0 ? "On-chain transaction history present" : "No transactions indexed",
-    };
-  } catch {
-    return null;
-  }
-}
-
-export function fingerprintSources(parts: string[]): string {
-  return createHash("sha256").update(parts.join("|")).digest("hex").slice(0, 16);
+): Promise<{ timestamp: number | null; error?: string }> {
+  const url = `${chain.explorerApiUrl}?module=account&action=txlist&address=${address}&page=1&offset=1&sort=asc`;
+  const result = await fetchJson<Record<string, unknown>>(url);
+  if (!result.ok) return { timestamp: null, error: result.error };
+  const row = asRecord(asArray(result.data.result)[0]);
+  if (!row) return { timestamp: null, error: "No transactions" };
+  const timestamp =
+    parseExplorerTimestamp(row.timeStamp) ?? parseExplorerTimestamp(row.timestamp);
+  if (!timestamp) return { timestamp: null };
+  return { timestamp };
 }
