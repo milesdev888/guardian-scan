@@ -103,14 +103,22 @@ export function daysAgo(timestamp: number | null | undefined | string): number |
 export function formatAge(timestamp: number | null | undefined | string): string {
   const days = daysAgo(timestamp);
   if (days === null) return "unknown age";
-  if (days < 1) return `${Math.max(1, Math.round(days * 24))} hours`;
-  if (days < 45) return `${Math.round(days)} days`;
+  if (days < 1) {
+    const hours = Math.max(1, Math.round(days * 24));
+    return hours === 1 ? "1 hour" : `${hours} hours`;
+  }
+  if (days < 45) {
+    const d = Math.round(days);
+    return d === 1 ? "1 day" : `${d} days`;
+  }
   if (days < 365) {
     const m = safeToFixed(days / 30, 1);
-    return m ? `${m} months` : "unknown age";
+    if (!m) return "unknown age";
+    return m === "1.0" ? "1.0 month" : `${m} months`;
   }
   const y = safeToFixed(days / 365, 1);
-  return y ? `${y} years` : "unknown age";
+  if (!y) return "unknown age";
+  return y === "1.0" ? "1.0 year" : `${y} years`;
 }
 
 /** Display years for AA proven line — e.g. "1.2 yrs". */
