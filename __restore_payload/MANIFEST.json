@@ -1,0 +1,21 @@
+{
+  "lib/guardian/grade.ts": {
+    "parts": [
+      "p00.b64",
+      "p01.b64"
+    ],
+    "md5": "108ec2551d0c9fa9cc1a4fa888e94041",
+    "raw_len": 16138,
+    "b64_len": 6876
+  },
+  "lib/adapters/evm.ts": {
+    "parts": [
+      "p02.b64",
+      "p03.b64",
+      "p04.b64"
+    ],
+    "md5": "0871dfc3e84ebc079fb1b581cc6eb716",
+    "raw_len": 29268,
+    "b64_len": 9452
+  }
+}
