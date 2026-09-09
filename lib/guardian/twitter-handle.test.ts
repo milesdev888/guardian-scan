@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import {
   composeShareOnXText,
+  curatedTwitterForAddress,
   normalizeTwitterHandle,
   pickTwitterHandle,
+  twitterHandleIsVerified,
   twitterTagDefaultOn,
 } from "./twitter-handle";
 
@@ -29,10 +31,22 @@ const dexOnly = pickTwitterHandle([
 assert.equal(dexOnly?.handle, "@Uniswap");
 assert.equal(dexOnly?.source, "dexscreener");
 
+assert.equal(twitterHandleIsVerified("token-metadata"), true);
+assert.equal(twitterHandleIsVerified("curated"), true);
+assert.equal(twitterHandleIsVerified("dexscreener"), false);
+assert.equal(twitterHandleIsVerified("geckoterminal"), false);
+assert.equal(twitterHandleIsVerified(null), false);
+
 assert.equal(twitterTagDefaultOn("token-metadata"), true);
+assert.equal(twitterTagDefaultOn("curated"), true);
 assert.equal(twitterTagDefaultOn("dexscreener"), false);
 assert.equal(twitterTagDefaultOn("geckoterminal"), false);
 assert.equal(twitterTagDefaultOn(null), false);
+
+const link = curatedTwitterForAddress("0x514910771AF9Ca656af840dff83E8264EcF986CA");
+assert.equal(link?.handle, "@chainlink");
+assert.equal(link?.source, "curated");
+assert.equal(twitterHandleIsVerified(link?.source), true);
 
 assert.equal(
   composeShareOnXText({
