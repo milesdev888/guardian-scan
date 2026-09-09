@@ -1,0 +1,11 @@
+{
+  "lib/adapters/evm.ts": {
+    "parts": [
+      "lib__adapters__evm.ts.part00.b64",
+      "lib__adapters__evm.ts.part01.b64",
+      "lib__adapters__evm.ts.part02.b64"
+    ],
+    "md5": "0871dfc3e84ebc079fb1b581cc6eb716",
+    "bytes": 29268
+  }
+}
