@@ -1,9 +1,6 @@
 name: restore-grade-evm-once
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - '.restore-tmp/**'
 permissions:
   contents: write
 jobs:
@@ -31,8 +28,7 @@ jobs:
           git config user.name "Cyredev"
           git config user.email "milesfrancisco73@gmail.com"
           git add lib/guardian/grade.ts lib/adapters/evm.ts
-          git commit -m "fix(scan): restore grade.ts with scaled majority ceiling" || echo "no grade change"
-          if ! git diff --cached --quiet; then git commit -m "fix(scan): explorer contract age + scaled majority LP copy"; fi
+          if git diff --cached --quiet; then echo 'no changes'; else git commit -m "fix(scan): restore grade.ts + evm.ts (explorer age, scaled majority)"; fi
           git rm -r .restore-tmp || true
           git rm -f .github/workflows/restore-grade-evm-once.yml || true
           git commit -m "chore: remove one-shot restore artifacts" || true
