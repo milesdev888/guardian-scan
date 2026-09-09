@@ -22,13 +22,16 @@ const QUALIFY_API =
   process.env.NEXT_PUBLIC_GUARDIAN_QUALIFY_API || "https://cyre.dev/api/badge/qualify";
 const SITE = (process.env.NEXT_PUBLIC_GUARDIAN_SITE_URL || "https://cyre.dev").replace(/\/$/, "");
 
+/** Primary CTA on every graded report — qualify is a live check, not a gate on visibility. */
+const GET_VERIFIED_LABEL = "Get Verified";
 const BUY_LABEL = "Get Guardian Verified \u2014 $25";
 
 /**
- * Report action row:
- * - Qualifying + unissued -> gold PRIMARY buy, then Share on X (secondary)
- * - Non-qualifying -> Share only (no buy)
- * - Already badged -> Share on X leads (primary), buy disappears
+ * Report action row (every graded report):
+ * - Always show Get Verified → /order?mint=… (or qualify checkoutUrl when eligible)
+ * - Qualifying + unissued → gold buy emphasis ($25)
+ * - Already badged → Share leads; Get Verified hidden (verify via Share / seal)
+ * - Non-qualifying → Get Verified still visible (order page explains gate)
  */
 export function ReportActionBar({
   mint,
@@ -67,19 +70,23 @@ export function ReportActionBar({
   }, [mint]);
 
   const badged = Boolean(data?.alreadyIssued && data.badge?.serial);
-  const showBuy = Boolean(data?.showBuy && data.checkoutUrl && !badged);
+  const qualifyingBuy = Boolean(data?.showBuy && data.checkoutUrl && !badged);
   const checkoutUrl =
     data?.checkoutUrl || `${SITE}/order?mint=${encodeURIComponent(mint)}`;
 
-  const buyBtn = showBuy ? (
+  const verifiedBtn = !badged ? (
     <a
       href={checkoutUrl}
+      data-testid="get-verified"
       className={cn(
-        buttonVariants({ variant: "default" }),
-        "h-9 rounded-xl border border-[#c9a227]/40 bg-[#c9a227] px-4 text-xs font-semibold text-[#0b1210] no-underline hover:bg-[#d4b03a]",
+        buttonVariants({ variant: qualifyingBuy ? "default" : "outline" }),
+        "h-9 rounded-xl px-4 text-xs font-semibold no-underline",
+        qualifyingBuy
+          ? "border border-[#c9a227]/40 bg-[#c9a227] text-[#0b1210] hover:bg-[#d4b03a]"
+          : "border-border bg-secondary/40 text-foreground hover:bg-secondary/70",
       )}
     >
-      {BUY_LABEL}
+      {qualifyingBuy ? BUY_LABEL : GET_VERIFIED_LABEL}
     </a>
   ) : null;
 
@@ -98,18 +105,14 @@ export function ReportActionBar({
   );
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2" data-testid="report-action-bar">
       {badged ? (
-        <>
-          {shareBtn}
-        </>
-      ) : showBuy ? (
-        <>
-          {buyBtn}
-          {shareBtn}
-        </>
-      ) : (
         <>{shareBtn}</>
+      ) : (
+        <>
+          {verifiedBtn}
+          {shareBtn}
+        </>
       )}
     </div>
   );
