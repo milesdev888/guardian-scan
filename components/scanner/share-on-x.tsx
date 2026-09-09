@@ -5,6 +5,7 @@ import { buttonVariants } from "@/components/ui/button";
 import type { Grade } from "@/lib/guardian/types";
 import {
   composeShareOnXText,
+  twitterHandleIsVerified,
   twitterTagDefaultOn,
   type TwitterHandleSource,
 } from "@/lib/guardian/twitter-handle";
@@ -12,9 +13,9 @@ import { cn } from "@/lib/utils";
 
 /**
  * Opens X compose intent with grade/score + scan URL (no price/hashtag spam).
- * When a known handle exists, offers a Tag chip - ON by default only for
- * token-metadata sources; OFF for Dex/Gecko profile data.
- * Card unfurl comes from report-page OG tags -> /api/card/<mint>/og.png.
+ * Tag chip renders only for verified sources (token-metadata or curated).
+ * Dex/Gecko handles are stored but never shown as a Tag — a wrong tag from
+ * our UI is worse than none.
  */
 export function ShareOnXButton({
   address,
@@ -46,7 +47,7 @@ export function ShareOnXButton({
     typeof score === "number" && Number.isFinite(score) ? String(Math.round(score)) : "-";
 
   const handle = twitterHandle && twitterHandle.startsWith("@") ? twitterHandle : null;
-  const canTag = Boolean(handle);
+  const canTag = Boolean(handle) && twitterHandleIsVerified(twitterHandleSource);
   const [tagOn, setTagOn] = useState(() => twitterTagDefaultOn(twitterHandleSource));
 
   const shareText = useMemo(() => {
@@ -101,8 +102,8 @@ export function ShareOnXButton({
           title={
             twitterHandleSource === "token-metadata"
               ? "Handle from token metadata"
-              : twitterHandleSource
-                ? `Handle from ${twitterHandleSource}`
+              : twitterHandleSource === "curated"
+                ? "Handle from curated verified list"
                 : "Tag handle in compose text"
           }
         >
