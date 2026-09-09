@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import {
+  analyzePoolsForAa,
   applyAaIfEligible,
   compileReportMeta,
   evaluateAaEligibility,
   gradeFromScore,
   isDistributedLiquidity,
+  majorityShareCeiling,
 } from "./grade";
 import type { Check, LiquidityPool, LpLockInfo, Pattern } from "./types";
 
@@ -147,7 +149,7 @@ const viaEstablished = applyAaIfEligible(100, "A", {
 });
 assert.equal(viaEstablished.grade, "AA");
 
-// Majority pool fails Established-path LP
+// Majority pool fails Established-path LP (thin book keeps ≤50%)
 const majorityPools: LiquidityPool[] = [
   { dex: "a", pairAddress: "1", quote: "SOL", liquidityUsd: 90_000, createdAt: null, url: null },
   { dex: "b", pairAddress: "2", quote: "SOL", liquidityUsd: 5_000, createdAt: null, url: null },
@@ -162,6 +164,42 @@ const majorityFail = evaluateAaEligibility({
 });
 assert.equal(majorityFail.lpOk, false);
 assert.equal(majorityFail.eligible, false);
+
+// LINK-shaped deep book: ~57% deepest pool of $36M → passes scaled ceiling (80%)
+assert.equal(majorityShareCeiling(500_000), 0.5);
+assert.equal(majorityShareCeiling(5_000_000), 0.8);
+const linkPools: LiquidityPool[] = [
+  { dex: "u", pairAddress: "1", quote: "WETH", liquidityUsd: 20_500_000, createdAt: null, url: null },
+  { dex: "u", pairAddress: "2", quote: "WETH", liquidityUsd: 13_000_000, createdAt: null, url: null },
+  { dex: "u", pairAddress: "3", quote: "USDC", liquidityUsd: 900_000, createdAt: null, url: null },
+  { dex: "u", pairAddress: "4", quote: "USDC", liquidityUsd: 800_000, createdAt: null, url: null },
+  { dex: "u", pairAddress: "5", quote: "DAI", liquidityUsd: 400_000, createdAt: null, url: null },
+  { dex: "u", pairAddress: "6", quote: "USDT", liquidityUsd: 100_000, createdAt: null, url: null },
+];
+const linkStats = analyzePoolsForAa(linkPools);
+assert.ok(linkStats.maxPoolShare > 0.5);
+assert.ok(linkStats.maxPoolShare <= linkStats.majorityShareCeiling);
+assert.equal(linkStats.noSingleMajority, true);
+const linkAa = evaluateAaEligibility({
+  score: 100,
+  checks: aaChecks(3000),
+  lp: unverifiedLp,
+  pools: linkPools,
+  patterns: [],
+});
+assert.equal(linkAa.lpOk, true);
+
+// pepeCoin-shaped: ~99% of ~$1.9M → still refused
+const pepePools: LiquidityPool[] = [
+  { dex: "u", pairAddress: "1", quote: "WETH", liquidityUsd: 1_903_773, createdAt: null, url: null },
+  { dex: "u", pairAddress: "2", quote: "WETH", liquidityUsd: 4_966, createdAt: null, url: null },
+  { dex: "u", pairAddress: "3", quote: "USDC", liquidityUsd: 103, createdAt: null, url: null },
+  { dex: "u", pairAddress: "4", quote: "DAI", liquidityUsd: 1, createdAt: null, url: null },
+];
+const pepeStats = analyzePoolsForAa(pepePools);
+assert.equal(pepeStats.noSingleMajority, false);
+assert.equal(isDistributedLiquidity(pepePools), false, "pepeCoin must not wear distributed chip");
+assert.equal(isDistributedLiquidity(linkPools), true, "LINK must wear distributed chip under scaled ceiling");
 
 // Live authorities block AA
 const liveAuth = applyAaIfEligible(100, "A", {
