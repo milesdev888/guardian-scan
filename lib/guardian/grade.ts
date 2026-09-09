@@ -1,1 +1,1 @@
-PLACEHOLDER_USE_DISK
+PLACEHOLDER_LOAD_FROM_/tmp/mcp-grade-args.json
