@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { runScan } from "@/lib/scan";
 import { jsonWithCors, optionsWithCors } from "@/lib/cors";
 
