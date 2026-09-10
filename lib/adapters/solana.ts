@@ -1,1 +1,1 @@
-PLACEHOLDER_WILL_FIX
+@file:///tmp/solana_to_push.ts
