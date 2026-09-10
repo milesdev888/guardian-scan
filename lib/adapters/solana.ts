@@ -1,1 +1,1 @@
-@file:///tmp/solana_to_push.ts
+${file:/tmp/solana_to_push.ts}
