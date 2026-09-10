@@ -21,8 +21,14 @@ function publicOrigin(request: NextRequest): string {
   return "https://scan.cyre.dev";
 }
 
+function readScanId(request: NextRequest): string | null {
+  const s = request.nextUrl.searchParams.get("s") || request.nextUrl.searchParams.get("scanId");
+  const id = (s || "").trim();
+  return id.length >= 8 ? id : null;
+}
+
 /**
- * GET /api/card/<mint>/og.png
+ * GET /api/card/<mint>/og.png?s=<scanId>
  * Compressed ~1024px OG variant (under 300KB). Full card stays at /api/card/<mint>.png.
  */
 export async function GET(
@@ -35,21 +41,28 @@ export async function GET(
     return new Response("Not found", { status: 404 });
   }
 
+  const scanId = readScanId(request);
+
   try {
-    const report = await loadScanForCard(mint);
+    const report = await loadScanForCard(mint, scanId);
     const badge = await lookupBadgeForMint(report.token.address);
     const model = buildShareCardModel(report, badge, {
       publicOrigin: publicOrigin(request),
     });
     const png = await renderShareCardOgPng(model);
 
+    const cache = scanId
+      ? "public, max-age=86400, s-maxage=86400, stale-while-revalidate=3600"
+      : "public, max-age=60, s-maxage=60, stale-while-revalidate=30";
+
     return new Response(new Uint8Array(png), {
       status: 200,
       headers: {
         "Content-Type": "image/png",
-        "Cache-Control": "public, max-age=300, s-maxage=300, stale-while-revalidate=60",
+        "Cache-Control": cache,
         "X-Guardian-Card": model.grade,
         "X-Guardian-Card-Mint": model.mint,
+        "X-Guardian-Card-Scan": report.scanId || "",
         "X-Guardian-Card-Variant": "og",
         "X-Guardian-Card-Width": String(CARD_OG_WIDTH),
         "X-Guardian-Card-Badge": model.showMedallion ? "VALID" : model.badgeStatus || "NONE",

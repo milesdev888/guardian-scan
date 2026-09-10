@@ -21,10 +21,17 @@ function publicOrigin(request: NextRequest): string {
   return "https://scan.cyre.dev";
 }
 
+function readScanId(request: NextRequest): string | null {
+  const s = request.nextUrl.searchParams.get("s") || request.nextUrl.searchParams.get("scanId");
+  const id = (s || "").trim();
+  return id.length >= 8 ? id : null;
+}
+
 /**
- * GET /api/card/<mint>.png
- * Serving discipline mirrors /api/seal/<serial>.png:
- * path param is lookup key only — all painted text comes from stored scan + badge records.
+ * GET /api/card/<mint>.png?s=<scanId>
+ * Path mint is lookup key; optional ?s= pins the share-card snapshot so the
+ * PNG matches the grade/score in the share text. Free-text query params are
+ * never painted onto the card.
  */
 export async function GET(
   request: NextRequest,
@@ -36,22 +43,30 @@ export async function GET(
     return new Response("Not found", { status: 404 });
   }
 
+  const scanId = readScanId(request);
+
   try {
-    const report = await loadScanForCard(mint);
-    // Ignore any query string text — only mint path is used for lookup.
+    const report = await loadScanForCard(mint, scanId);
     const badge = await lookupBadgeForMint(report.token.address);
     const model = buildShareCardModel(report, badge, {
       publicOrigin: publicOrigin(request),
     });
     const png = await renderShareCardPng(model);
 
+    // Snapshot URLs are content-addressed by scanId — cache longer.
+    // Mint-only URLs stay short so a rescan cannot serve a stale grade.
+    const cache = scanId
+      ? "public, max-age=86400, s-maxage=86400, stale-while-revalidate=3600"
+      : "public, max-age=60, s-maxage=60, stale-while-revalidate=30";
+
     return new Response(new Uint8Array(png), {
       status: 200,
       headers: {
         "Content-Type": "image/png",
-        "Cache-Control": "public, max-age=300, s-maxage=300, stale-while-revalidate=60",
+        "Cache-Control": cache,
         "X-Guardian-Card": model.grade,
         "X-Guardian-Card-Mint": model.mint,
+        "X-Guardian-Card-Scan": report.scanId || "",
         "X-Guardian-Card-Badge": model.showMedallion ? "VALID" : model.badgeStatus || "NONE",
         "Content-Length": String(png.length),
       },
