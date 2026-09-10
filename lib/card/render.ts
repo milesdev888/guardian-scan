@@ -48,6 +48,8 @@ const FONT_SERIF = '"DejaVu Serif", Georgia, "Times New Roman", serif';
 const FONT_MONO = '"DejaVu Sans Mono", "IBM Plex Mono", Menlo, monospace';
 const FONT_EMOJI = '"Noto Color Emoji", "DejaVu Sans", sans-serif';
 
+/** Rounded rect via explicit arcs (not arcTo). arcTo with r≈h/2 produced
+ *  degenerate end-caps — stray diagonals on the frame and curled chip tails. */
 function roundRect(
   ctx: SKRSContext2D,
   x: number,
@@ -56,13 +58,17 @@ function roundRect(
   h: number,
   r: number,
 ) {
-  const radius = Math.min(r, w / 2, h / 2);
+  const radius = Math.max(0, Math.min(r, w / 2, h / 2));
   ctx.beginPath();
   ctx.moveTo(x + radius, y);
-  ctx.arcTo(x + w, y, x + w, y + h, radius);
-  ctx.arcTo(x + w, y + h, x + w, y + h, radius);
-  ctx.arcTo(x + w, y + h, x, y + h, radius);
-  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.lineTo(x + w - radius, y);
+  ctx.arc(x + w - radius, y + radius, radius, -Math.PI / 2, 0);
+  ctx.lineTo(x + w, y + h - radius);
+  ctx.arc(x + w - radius, y + h - radius, radius, 0, Math.PI / 2);
+  ctx.lineTo(x + radius, y + h);
+  ctx.arc(x + radius, y + h - radius, radius, Math.PI / 2, Math.PI);
+  ctx.lineTo(x, y + radius);
+  ctx.arc(x + radius, y + radius, radius, Math.PI, (3 * Math.PI) / 2);
   ctx.closePath();
 }
 
@@ -271,11 +277,17 @@ function drawChip(
   const h = 48;
 
   ctx.fillStyle = bg;
-  roundRect(ctx, x, y, w, h, 24);
+  // Radius < h/2 so end-caps stay true quarter-circles (pill, not degenerate).
+  roundRect(ctx, x, y, w, h, 20);
   ctx.fill();
-  ctx.strokeStyle = border;
-  ctx.lineWidth = 1.75;
+  roundRect(ctx, x, y, w, h, 20);
+  ctx.strokeStyle = outlineGold ? "#E8C56A" : colors.border;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
   ctx.stroke();
+  ctx.lineJoin = "miter";
+  ctx.lineCap = "butt";
 
   drawChipIcon(ctx, chip.id, x + 22, y + h / 2, fg);
   ctx.fillStyle = fg;
@@ -310,26 +322,35 @@ export async function renderShareCardPng(model: ShareCardModel): Promise<Buffer>
     drawFlatGoldG(ctx, markX, markY, markSize);
   }
 
-  // NAME $TICKER on one line; — CHAIN beneath (visual target)
+  // NAME $TICKER on one line; — CHAIN beneath.
+  // Safe-zone: frame inset is 36px; keep ≥48px from frame to glyph top
+  // (56px serif ascent ≈ 44px → baseline ≥ 128; use 176 for clear padding).
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
   const textLeft = 300;
+  const nameBaseline = 196;
+  const chainBaseline = 244;
+  const titleMaxRight = CARD_WIDTH - 280; // leave room for QR / right margin
   ctx.fillStyle = "#F4F1EA";
   ctx.font = `700 56px ${FONT_SERIF}`;
-  const name = model.tokenName.length > 28 ? `${model.tokenName.slice(0, 26)}…` : model.tokenName;
+  let name = model.tokenName;
+  while (name.length > 4 && ctx.measureText(name).width + textLeft > titleMaxRight - 160) {
+    name = `${name.slice(0, Math.max(1, name.length - 2))}…`;
+  }
+  if (name.length > 28) name = `${name.slice(0, 26)}…`;
   const tickerHasEmoji = /[^\u0000-\u00ff]/.test(model.ticker);
   const nameWidth = ctx.measureText(name).width;
-  ctx.fillText(name, textLeft, 150);
+  ctx.fillText(name, textLeft, nameBaseline);
 
   ctx.fillStyle = "#E8C56A";
   ctx.font = tickerHasEmoji
     ? `600 48px ${FONT_EMOJI}`
     : `600 48px ${FONT_SERIF}`;
-  ctx.fillText(model.ticker, textLeft + nameWidth + 18, 150);
+  ctx.fillText(model.ticker, textLeft + nameWidth + 18, nameBaseline);
 
   ctx.fillStyle = "#C9A84A";
   ctx.font = `500 26px ${FONT_UI}`;
-  ctx.fillText(`— ${model.chainName.toUpperCase()}`, textLeft, 198);
+  ctx.fillText(`— ${model.chainName.toUpperCase()}`, textLeft, chainBaseline);
 
   // Grade line
   const gradeY = 360;
