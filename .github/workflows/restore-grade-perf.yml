@@ -1,0 +1,29 @@
+name: restore-grade-perf
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.restore/grade.ts.b64.*'
+permissions:
+  contents: write
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/cursor/solana-scan-perf-354a'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble grade.ts
+        run: |
+          set -euo pipefail
+          test -f .restore/grade.ts.b64.3
+          cat .restore/grade.ts.b64.0 .restore/grade.ts.b64.1 .restore/grade.ts.b64.2 .restore/grade.ts.b64.3 | base64 -d > lib/guardian/grade.ts
+          EXPECTED=97cdc53467b10a7fdfc6a4ad21a17a45e21fb2bfe9d274bde49d69627ecbe0f3
+          ACTUAL=$(sha256sum lib/guardian/grade.ts | awk '{print $1}')
+          echo "sha256=$ACTUAL"
+          test "$ACTUAL" = "$EXPECTED"
+          rm -f .restore/grade.ts.b64.* .restore/grade.ts.part.*
+          git config user.name "Cyredev"
+          git config user.email "milesfrancisco73@gmail.com"
+          git add -A
+          git commit -m "fix(scan): restore exact grade.ts for solana perf batch" || exit 0
+          git push

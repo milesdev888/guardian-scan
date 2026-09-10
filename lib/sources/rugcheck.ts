@@ -120,7 +120,7 @@ export async function fetchRugCheck(
   mint: string,
 ): Promise<{ data: RugCheckReport | null; error?: string }> {
   const url = `https://api.rugcheck.xyz/v1/tokens/${encodeURIComponent(mint)}/report`;
-  const result = await fetchJson<Record<string, unknown>>(url, { timeoutMs: 16_000 });
+  const result = await fetchJson<Record<string, unknown>>(url, { timeoutMs: 8_000 });
   if (!result.ok) return { data: null, error: result.error };
   const root = result.data;
   const tokenMetaRaw = asRecord(root.tokenMeta);

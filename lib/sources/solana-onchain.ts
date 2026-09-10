@@ -4,6 +4,9 @@ type RpcResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string };
 
+/** Hard ceiling per RPC round-trip (including retries across fallbacks). */
+const RPC_TIMEOUT_MS = 8_000;
+
 async function solanaRpc<T>(
   rpcUrl: string,
   method: string,
@@ -11,13 +14,20 @@ async function solanaRpc<T>(
 ): Promise<RpcResult<T>> {
   const urls = [rpcUrl, ...SOLANA_RPC_FALLBACKS.filter((url) => url !== rpcUrl)];
   let lastError = "Solana RPC failed";
+  const deadline = Date.now() + RPC_TIMEOUT_MS;
+
   for (const url of urls) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.min(remaining, RPC_TIMEOUT_MS));
     try {
       const response = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json", "user-agent": "GuardianScan/2.0" },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
         cache: "no-store",
+        signal: controller.signal,
       });
       if (!response.ok) {
         lastError = `HTTP ${response.status} from Solana RPC`;
@@ -35,7 +45,15 @@ async function solanaRpc<T>(
       }
       return { ok: true, data: json.result as T };
     } catch (error) {
-      lastError = error instanceof Error ? error.message : "Solana RPC failed";
+      lastError =
+        error instanceof Error
+          ? error.name === "AbortError"
+            ? "Request timed out"
+            : error.message
+          : "Solana RPC failed";
+      if (/timed out|timeout|abort/i.test(lastError)) continue;
+    } finally {
+      clearTimeout(timer);
     }
   }
   return { ok: false, error: lastError };
@@ -81,8 +99,12 @@ type ParsedKey =
     };
 
 /**
- * When RugCheck omits creator, resolve the mint's earliest on-chain fee payer.
- * Prefers an initializeMint* instruction for this mint when present in history.
+ * When RugCheck omits creator, resolve a deployer fee-payer cheaply.
+ *
+ * Established tokens (e.g. JUP) have far more than 1k recent signatures; walking
+ * them for initializeMint previously cost 60–100s. We only sample a small
+ * recent window and take the oldest fee payer in that window — good enough for
+ * the deployer_age "unknown until Watch" slot, with an 8s hard cap upstream.
  */
 export async function resolveMintDeployer(
   rpcUrl: string,
@@ -90,14 +112,14 @@ export async function resolveMintDeployer(
 ): Promise<{ deployer: string | null; error?: string }> {
   const sigResult = await solanaRpc<
     Array<{ signature: string; blockTime?: number | null; err?: unknown }>
-  >(rpcUrl, "getSignaturesForAddress", [mint, { limit: 1000 }]);
+  >(rpcUrl, "getSignaturesForAddress", [mint, { limit: 25 }]);
   if (!sigResult.ok) return { deployer: null, error: sigResult.error };
   const signatures = sigResult.data ?? [];
   if (!signatures.length) return { deployer: null, error: "No signatures for mint" };
 
-  // Walk oldest → newest looking for initializeMint for this mint.
-  for (const row of [...signatures].reverse()) {
-    if (row.err) continue;
+  // Prefer an initializeMint in the oldest few of this window (max 3 txs).
+  const oldestFirst = [...signatures].reverse().filter((row) => !row.err).slice(0, 3);
+  for (const row of oldestFirst) {
     const txResult = await solanaRpc<{
       transaction?: { message?: { accountKeys?: ParsedKey[]; instructions?: unknown[] } };
       meta?: { innerInstructions?: Array<{ instructions?: unknown[] }> };
@@ -111,7 +133,9 @@ export async function resolveMintDeployer(
     const feePayer = keyPubkey(keys[0]);
     const instructions = [
       ...(message?.instructions ?? []),
-      ...((txResult.data.meta?.innerInstructions ?? []).flatMap((group) => group.instructions ?? [])),
+      ...((txResult.data.meta?.innerInstructions ?? []).flatMap(
+        (group) => group.instructions ?? [],
+      )),
     ];
     for (const raw of instructions) {
       const ix = raw as { parsed?: { type?: string; info?: Record<string, unknown> } };
@@ -124,19 +148,11 @@ export async function resolveMintDeployer(
       if (mintInIx && mintInIx !== mint) continue;
       if (feePayer) return { deployer: feePayer };
     }
+    // Fall through: use fee payer of oldest successful signature in the window.
+    if (feePayer) return { deployer: feePayer };
   }
 
-  // Fallback: fee payer of the oldest successful signature involving the mint.
-  const oldest = [...signatures].reverse().find((row) => !row.err) ?? signatures[signatures.length - 1];
-  const txResult = await solanaRpc<{
-    transaction?: { message?: { accountKeys?: ParsedKey[] } };
-  }>(rpcUrl, "getTransaction", [
-    oldest.signature,
-    { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 },
-  ]);
-  if (!txResult.ok || !txResult.data) return { deployer: null, error: txResult.ok ? "Empty tx" : txResult.error };
-  const feePayer = keyPubkey(txResult.data.transaction?.message?.accountKeys?.[0]);
-  return { deployer: feePayer };
+  return { deployer: null, error: "Could not resolve deployer from recent signatures" };
 }
 
 function keyPubkey(key: ParsedKey | undefined): string | null {

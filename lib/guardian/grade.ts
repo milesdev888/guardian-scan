@@ -159,7 +159,13 @@ export function shorten(address: string, size = 4) {
 
 export function check(partial: Omit<Check, "grade"> & { grade?: Grade }): Check {
   return {
-    grade: partial.grade ?? (partial.status === "pass" ? "A" : partial.status === "unknown" ? "U" : "C"),
+    grade:
+      partial.grade ??
+      (partial.status === "pass"
+        ? "A"
+        : partial.status === "unknown" || partial.status === "unavailable"
+          ? "U"
+          : "C"),
     ...partial,
   };
 }

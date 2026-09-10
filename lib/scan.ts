@@ -23,10 +23,13 @@ export function adapterFor(family: Family): ChainAdapter {
 }
 
 const cache = new Map<string, { expires: number; report: GuardianReport }>();
-const CACHE_MS = 45_000;
+/** Full-report cache TTL — badge qualify + order must reuse within this window. */
+const CACHE_MS = 12 * 60_000;
 
 function cacheKey(chainId: string, address: string, currency?: string) {
   if (chainId === "xrpl") return `xrpl:${address}:${currency ?? ""}`;
+  // Solana base58 is case-sensitive — do not lower-case mints.
+  if (chainId === "solana") return `solana:${address}`;
   return `${chainId}:${address.toLowerCase()}`;
 }
 
@@ -68,13 +71,29 @@ export async function scanOnChain(
       currency = currency ?? parsed.currency;
     }
   }
-  const hit = cached(chainId, chainId === "xrpl" ? addr : address, currency);
-  if (hit) return hit;
+  const cacheAddr = chainId === "xrpl" ? addr : address;
+  const hit = cached(chainId, cacheAddr, currency);
+  if (hit) {
+    console.info(
+      `[scan-timing] ${JSON.stringify({ label: `${chainId}:${cacheAddr}`, cache: "hit", totalMs: 0 })}`,
+    );
+    return hit;
+  }
   const chain = getChain(chainId);
   if (!chain) throw new Error(`Unknown chain: ${chainId}`);
   const adapter = adapterFor(chain.family);
+  const t0 = Date.now();
   const report = await adapter.scan(addr, chain, { currency });
-  remember(report, chainId === "xrpl" ? addr : address, currency);
+  remember(report, cacheAddr, currency);
+  console.info(
+    `[scan-timing] ${JSON.stringify({
+      label: `${chainId}:${cacheAddr}`,
+      cache: "miss",
+      totalMs: Date.now() - t0,
+      grade: report.grade,
+      score: report.score,
+    })}`,
+  );
   return report;
 }
 

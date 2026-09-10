@@ -198,6 +198,8 @@ function isRetryableSolanaRpcError(message: string | undefined) {
 
 async function solanaAccountExistsOnce(rpcUrl: string, address: string) {
   try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8_000);
     const response = await fetch(rpcUrl, {
       method: "POST",
       headers: { "content-type": "application/json", "user-agent": "GuardianScan/2.0" },
@@ -208,7 +210,8 @@ async function solanaAccountExistsOnce(rpcUrl: string, address: string) {
         params: [address, { encoding: "base64" }],
       }),
       cache: "no-store",
-    });
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timer));
     if (!response.ok) {
       return { exists: false, error: `HTTP ${response.status} from Solana RPC` };
     }

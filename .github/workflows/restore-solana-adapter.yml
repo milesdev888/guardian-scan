@@ -1,0 +1,29 @@
+name: restore-solana-adapter
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.restore/**'
+permissions:
+  contents: write
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/cursor/solana-scan-perf-354a'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble and commit solana adapter
+        run: |
+          set -euo pipefail
+          test -f .restore/solana.ts.b64.6
+          cat .restore/solana.ts.b64.0 .restore/solana.ts.b64.1 .restore/solana.ts.b64.2 .restore/solana.ts.b64.3 .restore/solana.ts.b64.4 .restore/solana.ts.b64.5 .restore/solana.ts.b64.6 | base64 -d > lib/adapters/solana.ts
+          EXPECTED=76be8c8fc1afec2b39aa56df4069b644b5098439b3eafd7505418eaa42cae2ed
+          ACTUAL=$(sha256sum lib/adapters/solana.ts | awk '{print $1}')
+          echo "sha256=$ACTUAL"
+          test "$ACTUAL" = "$EXPECTED"
+          rm -rf .restore
+          git config user.name "Cyredev"
+          git config user.email "milesfrancisco73@gmail.com"
+          git add -A
+          git commit -m "fix(scan): restore exact Solana adapter with parallel 8s timeouts" || exit 0
+          git push
