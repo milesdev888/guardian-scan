@@ -14,6 +14,39 @@ export type ExplorerCreation = {
   timestamp: number | null;
 };
 
+/** Earliest plausible EVM contract (pre-Frontier buffer). */
+const TS_MIN_MS = Date.parse("2015-01-01T00:00:00Z");
+
+/**
+ * Sanitize explorer / pool timestamps. Rejects hex-as-number garbage
+ * (e.g. Number("0xabc…") → 1e47+) that once made LINK look "1 hours old".
+ */
+export function sanitizeTimestampMs(raw: number | null | undefined): number | null {
+  if (raw == null || !Number.isFinite(raw) || raw <= 0) return null;
+  const ms = raw < 10_000_000_000 ? raw * 1000 : raw;
+  const max = Date.now() + 86_400_000;
+  if (ms < TS_MIN_MS || ms > max) return null;
+  return ms;
+}
+
+/**
+ * Parse a timestamp from explorer payloads. Never coerces 0x-hashes via Number().
+ * Accepts unix seconds/ms or ISO-8601 strings.
+ */
+export function parseExplorerTimestamp(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (/^0x[0-9a-f]+$/i.test(trimmed)) return null; // hash / address — not a time
+    if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+      return sanitizeTimestampMs(Date.parse(trimmed));
+    }
+  }
+  const n = num(value);
+  return sanitizeTimestampMs(n);
+}
+
 function isBlockscoutHost(explorerApiUrl: string): boolean {
   return /blockscout\.com/i.test(explorerApiUrl);
 }
@@ -140,6 +173,42 @@ export async function fetchExplorerSource(
   };
 }
 
+async function timestampFromBlockscoutTx(
+  origin: string,
+  txHash: string,
+): Promise<number | null> {
+  const url = `${origin}/api/v2/transactions/${encodeURIComponent(txHash)}`;
+  const result = await fetchJson<Record<string, unknown>>(url, {
+    headers: {
+      accept: "application/json",
+      referer: `${origin}/`,
+      "user-agent":
+        "Mozilla/5.0 (compatible; GuardianScan/2.0; +https://scan.cyre.dev)",
+    },
+  });
+  if (!result.ok) return null;
+  return (
+    parseExplorerTimestamp(result.data.timestamp) ??
+    parseExplorerTimestamp(asRecord(result.data.block)?.timestamp)
+  );
+}
+
+async function timestampFromClassicBlock(
+  chain: EvmChainConfig,
+  blockNumber: number,
+): Promise<number | null> {
+  const url = `${chain.explorerApiUrl}?module=block&action=getblockreward&blockno=${blockNumber}`;
+  const result = await fetchJson<Record<string, unknown>>(url);
+  if (!result.ok) return null;
+  const row = asRecord(result.data.result) ?? result.data;
+  return parseExplorerTimestamp(asRecord(row)?.timeStamp) ?? parseExplorerTimestamp(asRecord(row)?.timestamp);
+}
+
+/**
+ * Contract-creation age from the explorer — never DexScreener pool age.
+ * Blockscout address payloads expose creation_transaction_hash without a
+ * timestamp; we resolve time via the creation tx (or classic blockNumber).
+ */
 export async function fetchExplorerCreation(
   chain: EvmChainConfig,
   address: string,
@@ -160,22 +229,22 @@ export async function fetchExplorerCreation(
         str(result.data.creator_address_hash) ??
         str(asRecord(result.data.creator_address_hash)?.hash) ??
         null;
-      const txHash = str(result.data.creation_tx_hash);
-      const timestampRaw =
-        num(result.data.creation_transaction_hash) ??
-        num(asRecord(result.data.block)?.timestamp);
-      // creation time often nested; leave null if absent — caller has pairCreatedAt fallback
-      return {
-        data: {
-          creator,
-          txHash,
-          timestamp: timestampRaw
-            ? timestampRaw < 10_000_000_000
-              ? timestampRaw * 1000
-              : timestampRaw
-            : null,
-        },
-      };
+      const txHash =
+        str(result.data.creation_transaction_hash) ??
+        str(result.data.creation_tx_hash) ??
+        null;
+      let timestamp =
+        parseExplorerTimestamp(result.data.timestamp) ??
+        parseExplorerTimestamp(asRecord(result.data.block)?.timestamp);
+
+      // NEVER num(creation_transaction_hash) — hex hashes coerce to 1e47+ floats.
+      if (timestamp == null && txHash) {
+        timestamp = await timestampFromBlockscoutTx(origin, txHash);
+      }
+
+      if (creator || txHash || timestamp) {
+        return { data: { creator, txHash, timestamp } };
+      }
     }
   }
 
@@ -184,12 +253,29 @@ export async function fetchExplorerCreation(
   if (!result.ok) return { data: null, error: result.error };
   const row = asRecord(asArray(result.data.result)[0]) ?? asRecord(result.data.result);
   if (!row) return { data: null, error: "Explorer returned no creation payload" };
-  const timestamp = num(row.timestamp) ?? num(row.timeStamp);
+
+  const creator = str(row.contractCreator) ?? str(row.creatorAddress);
+  const txHash = str(row.txHash) ?? str(row.txnHash);
+  let timestamp =
+    parseExplorerTimestamp(row.timestamp) ?? parseExplorerTimestamp(row.timeStamp);
+
+  if (timestamp == null) {
+    const blockNo = num(row.blockNumber) ?? num(row.blockNumber);
+    if (blockNo != null && blockNo > 0 && blockNo < 1e12) {
+      timestamp = await timestampFromClassicBlock(chain, Math.trunc(blockNo));
+    }
+  }
+
+  // Last resort: Blockscout tx endpoint when classic gave a hash but no time
+  if (timestamp == null && txHash && isBlockscoutHost(chain.explorerApiUrl)) {
+    timestamp = await timestampFromBlockscoutTx(blockscoutOrigin(chain.explorerApiUrl), txHash);
+  }
+
   return {
     data: {
-      creator: str(row.contractCreator) ?? str(row.creatorAddress),
-      txHash: str(row.txHash) ?? str(row.txnHash),
-      timestamp: timestamp ? (timestamp < 10_000_000_000 ? timestamp * 1000 : timestamp) : null,
+      creator,
+      txHash,
+      timestamp,
     },
   };
 }
@@ -203,7 +289,8 @@ export async function fetchFirstTransactionTime(
   if (!result.ok) return { timestamp: null, error: result.error };
   const row = asRecord(asArray(result.data.result)[0]);
   if (!row) return { timestamp: null, error: "No transactions" };
-  const timestamp = num(row.timeStamp) ?? num(row.timestamp);
+  const timestamp =
+    parseExplorerTimestamp(row.timeStamp) ?? parseExplorerTimestamp(row.timestamp);
   if (!timestamp) return { timestamp: null };
-  return { timestamp: timestamp < 10_000_000_000 ? timestamp * 1000 : timestamp };
+  return { timestamp };
 }

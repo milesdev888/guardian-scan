@@ -13,7 +13,7 @@ import {
   pattern,
 } from "@/lib/guardian/grade";
 import { isEvmAddress } from "@/lib/chains/detect";
-import { fetchDexToken, filterPairsForChain, identityFromPairs, pickCanonicalPair } from "@/lib/sources/dexscreener";
+import { fetchDexToken, filterPairsForChain, identityFromPairs } from "@/lib/sources/dexscreener";
 import { fetchExplorerCreation, fetchExplorerSource, fetchFirstTransactionTime } from "@/lib/sources/explorer";
 import { collectPrivileges, fetchGoPlusEvm, percentFromGoPlus } from "@/lib/sources/goplus";
 import { fetchHoneypot } from "@/lib/sources/honeypot";
@@ -384,12 +384,15 @@ export class EvmAdapter implements ChainAdapter {
             }),
     );
 
-    const createdAt =
-      creationResult.data?.timestamp ??
-      pickCanonicalPair(pairs, lower)?.pairCreatedAt ??
-      honeypot?.pairCreatedAt ??
-      null;
+    // Contract age = explorer contract-creation only. Pool age is a separate signal.
+    const createdAt = creationResult.data?.timestamp ?? null;
     const ageDays = daysAgo(createdAt);
+    const poolCreatedAts = pools
+      .map((p) => p.createdAt)
+      .map((v) => (typeof v === "number" ? v : null))
+      .filter((v): v is number => v != null && Number.isFinite(v) && v > 0);
+    const oldestPoolAt = poolCreatedAts.length ? Math.min(...poolCreatedAts) : null;
+    const poolAgeDays = daysAgo(oldestPoolAt);
 
     const lpHolders = goplus?.lp_holders ?? [];
     const lockedPct = lpHolders.reduce((sum, row) => {
@@ -437,8 +440,9 @@ export class EvmAdapter implements ChainAdapter {
                 status: "pass",
                 grade: "B",
                 summary: `Distributed liquidity · ${poolStats.poolCount} independent pools · ${formatUsd(poolStats.totalLiquidityUsd)} depth.`,
-                detail:
-                  "Deep multi-pool books with no single-pool majority — protocol-depth liquidity across independent venues, not the same risk shape as a young token with one thin pool.",
+                detail: poolStats.noSingleMajority
+                  ? `Deep multi-pool books within the liquidity-scaled max-pool-share ceiling (max ${(poolStats.maxPoolShare * 100).toFixed(1)}% ≤ ${(poolStats.majorityShareCeiling * 100).toFixed(0)}%) — protocol-depth liquidity across independent venues, not the same risk shape as a young token with one thin pool.`
+                  : `Deep multi-pool books (${poolStats.poolCount} venues, ${formatUsd(poolStats.totalLiquidityUsd)}) — deepest pool is ${(poolStats.maxPoolShare * 100).toFixed(1)}% of depth (ceiling ${(poolStats.majorityShareCeiling * 100).toFixed(0)}% at this liquidity).`,
                 evidence: {
                   lockedPct,
                   burnedPct,
@@ -447,6 +451,8 @@ export class EvmAdapter implements ChainAdapter {
                   distributedLiquidity: true,
                   poolCount: poolStats.poolCount,
                   maxPoolShare: poolStats.maxPoolShare,
+                  majorityShareCeiling: poolStats.majorityShareCeiling,
+                  noSingleMajority: poolStats.noSingleMajority,
                 },
               })
             : check({
@@ -517,9 +523,10 @@ export class EvmAdapter implements ChainAdapter {
             title: "Contract age",
             status: "unknown",
             grade: "U",
-            summary: "Creation time was not available.",
-            detail: "Explorer creation API and DexScreener pairCreatedAt both missed.",
-            evidence: { ageDays: null, createdAt },
+            summary: "Contract creation time was not available from the explorer.",
+            detail:
+              "Age uses explorer contract-creation only (not DexScreener pool age). Pool age is reported separately when known.",
+            evidence: { ageDays: null, createdAt, source: "explorer" },
           })
         : ageDays < 2
           ? check({
@@ -529,7 +536,7 @@ export class EvmAdapter implements ChainAdapter {
               grade: "D",
               summary: `Contract is ${formatAge(createdAt)} old.`,
               detail: "Brand-new contracts are where most copycat launches cluster. Age is a pattern, not proof of intent.",
-              evidence: { ageDays, createdAt },
+              evidence: { ageDays, createdAt, source: "explorer", txHash: creationResult.data?.txHash ?? null },
             })
           : check({
               id: "contract_age",
@@ -537,10 +544,25 @@ export class EvmAdapter implements ChainAdapter {
               status: "pass",
               grade: ageDays < 30 ? "B" : "A",
               summary: `Contract is ${formatAge(createdAt)} old.`,
-              detail: deployer ? `Deployer ${deployer}.` : "Deployer not listed.",
-              evidence: { ageDays, createdAt, deployer },
+              detail: deployer ? `Deployer ${deployer}. Explorer contract-creation.` : "Explorer contract-creation.",
+              evidence: { ageDays, createdAt, deployer, source: "explorer", txHash: creationResult.data?.txHash ?? null },
             }),
     );
+
+    if (poolAgeDays !== null && oldestPoolAt != null) {
+      checks.push(
+        check({
+          id: "pool_age",
+          title: "Pool age",
+          status: "unknown",
+          grade: "U",
+          summary: `Oldest listed pool is ${formatAge(oldestPoolAt)} old.`,
+          detail:
+            "Pool age is DexScreener pairCreatedAt — a separate signal from contract creation. It does not drive the Young Token chip or AA age gate.",
+          evidence: { ageDays: poolAgeDays, createdAt: oldestPoolAt, source: "dexscreener" },
+        }),
+      );
+    }
 
     const deployerAge = daysAgo(deployerFirstTx);
     checks.push(

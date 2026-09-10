@@ -103,7 +103,7 @@ export type TokenIdentity = {
   /** Normalized `@handle` when known from scan sources — never guessed. */
   twitterHandle?: string | null;
   /** Where twitterHandle was observed. Drives Tag-chip default. */
-  twitterHandleSource?: "token-metadata" | "dexscreener" | "geckoterminal" | null;
+  twitterHandleSource?: "token-metadata" | "dexscreener" | "geckoterminal" | "curated" | null;
 };
 
 export type LpTier = "BURNED" | "PERMANENT" | "TIMED" | "UNVERIFIED";
@@ -237,6 +237,7 @@ export const CHECK_IDS = [
   "lp_lock",
   "holder_concentration",
   "contract_age",
+  "pool_age",
   "deployer_age",
   "copycats",
 ] as const;

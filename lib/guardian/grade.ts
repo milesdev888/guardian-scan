@@ -83,23 +83,42 @@ export function safeToFixed(value: unknown, digits: number): string | null {
 }
 
 export function daysAgo(timestamp: number | null | undefined | string): number | null {
+  if (timestamp === null || timestamp === undefined || timestamp === "") return null;
+  // ISO strings
+  if (typeof timestamp === "string" && /^\d{4}-\d{2}-\d{2}/.test(timestamp.trim())) {
+    const parsed = Date.parse(timestamp);
+    if (!Number.isFinite(parsed)) return null;
+    if (parsed < Date.parse("2015-01-01") || parsed > Date.now() + 86_400_000) return null;
+    return Math.max(0, (Date.now() - parsed) / 86_400_000);
+  }
+  // Reject 0x hashes coerced through Number()
+  if (typeof timestamp === "string" && /^0x[0-9a-f]+$/i.test(timestamp.trim())) return null;
   const msRaw = asFiniteNumber(timestamp);
   if (msRaw === null || msRaw <= 0) return null;
   const ms = msRaw < 10_000_000_000 ? msRaw * 1000 : msRaw;
+  if (ms < Date.parse("2015-01-01") || ms > Date.now() + 86_400_000) return null;
   return Math.max(0, (Date.now() - ms) / 86_400_000);
 }
 
 export function formatAge(timestamp: number | null | undefined | string): string {
   const days = daysAgo(timestamp);
   if (days === null) return "unknown age";
-  if (days < 1) return `${Math.max(1, Math.round(days * 24))} hours`;
-  if (days < 45) return `${Math.round(days)} days`;
+  if (days < 1) {
+    const hours = Math.max(1, Math.round(days * 24));
+    return hours === 1 ? "1 hour" : `${hours} hours`;
+  }
+  if (days < 45) {
+    const d = Math.round(days);
+    return d === 1 ? "1 day" : `${d} days`;
+  }
   if (days < 365) {
     const m = safeToFixed(days / 30, 1);
-    return m ? `${m} months` : "unknown age";
+    if (!m) return "unknown age";
+    return m === "1.0" ? "1.0 month" : `${m} months`;
   }
   const y = safeToFixed(days / 365, 1);
-  return y ? `${y} years` : "unknown age";
+  if (!y) return "unknown age";
+  return y === "1.0" ? "1.0 year" : `${y} years`;
 }
 
 /** Display years for AA proven line — e.g. "1.2 yrs". */
@@ -250,10 +269,30 @@ export type AaPoolStats = {
   poolCount: number;
   totalLiquidityUsd: number;
   maxPoolShare: number;
+  majorityShareCeiling: number;
   noSingleMajority: boolean;
 };
 
-/** Independent pools + liquidity concentration (AA / Distributed-Liquidity gate). */
+/** Strict flat majority bar applies below this total liquidity (USD). */
+export const MAJORITY_STRICT_USD = 1_000_000;
+/** Above this total liquidity (USD), ceiling is fully relaxed. */
+export const MAJORITY_RELAX_USD = 5_000_000;
+export const MAJORITY_SHARE_STRICT = 0.5;
+export const MAJORITY_SHARE_RELAXED = 0.8;
+
+/**
+ * Liquidity-scaled single-pool share ceiling — shared with badge Established path.
+ * &lt;$1M → ≤50%; $1M→$5M linear 50%→80%; ≥$5M → ≤80%.
+ */
+export function majorityShareCeiling(totalLiquidityUsd: number): number {
+  const total = asFiniteNumber(totalLiquidityUsd) ?? 0;
+  if (total < MAJORITY_STRICT_USD) return MAJORITY_SHARE_STRICT;
+  if (total >= MAJORITY_RELAX_USD) return MAJORITY_SHARE_RELAXED;
+  const t = (total - MAJORITY_STRICT_USD) / (MAJORITY_RELAX_USD - MAJORITY_STRICT_USD);
+  return MAJORITY_SHARE_STRICT + (MAJORITY_SHARE_RELAXED - MAJORITY_SHARE_STRICT) * t;
+}
+
+/** Independent pools + liquidity concentration (AA / Distributed-Liquidity / Established). */
 export function analyzePoolsForAa(pools: LiquidityPool[] | null | undefined): AaPoolStats {
   const rows = (Array.isArray(pools) ? pools : [])
     .map((p) => ({
@@ -275,11 +314,13 @@ export function analyzePoolsForAa(pools: LiquidityPool[] | null | undefined): Aa
   const total = independent.reduce((s, r) => s + r.liquidityUsd, 0);
   const maxShare =
     total > 0 ? Math.max(...independent.map((r) => r.liquidityUsd / total)) : 1;
+  const shareCeiling = majorityShareCeiling(total);
   return {
     poolCount: independent.length,
     totalLiquidityUsd: total,
     maxPoolShare: maxShare,
-    noSingleMajority: independent.length >= 2 && maxShare <= 0.5,
+    majorityShareCeiling: shareCeiling,
+    noSingleMajority: independent.length >= 2 && maxShare <= shareCeiling,
   };
 }
 
@@ -293,9 +334,12 @@ export function isDistributedLiquidity(
   pools: LiquidityPool[] | null | undefined,
 ): boolean {
   const stats = analyzePoolsForAa(pools);
+  // Same majority calculation as badge Established — never claim
+  // "distributed / no single-pool majority" when max share exceeds the ceiling.
   return (
     stats.poolCount >= DISTRIBUTED_LIQUIDITY_MIN_POOLS &&
-    stats.totalLiquidityUsd >= DISTRIBUTED_LIQUIDITY_MIN_USD
+    stats.totalLiquidityUsd >= DISTRIBUTED_LIQUIDITY_MIN_USD &&
+    stats.noSingleMajority
   );
 }
 
