@@ -37,12 +37,14 @@ export function ReportActionBar({
   mint,
   grade,
   score,
+  scanId = null,
   twitterHandle = null,
   twitterHandleSource = null,
 }: {
   mint: string;
   grade: Grade;
   score: number | null | undefined;
+  scanId?: string | null;
   twitterHandle?: string | null;
   twitterHandleSource?: TwitterHandleSource | null;
 }) {
@@ -92,10 +94,11 @@ export function ReportActionBar({
 
   const shareBtn = (
     <ShareOnXButton
-      key={`${mint}:${twitterHandle ?? ""}:${badged ? "badged" : "scan"}`}
+      key={`${mint}:${scanId ?? ""}:${twitterHandle ?? ""}:${badged ? "badged" : "scan"}`}
       address={mint}
       grade={grade}
       score={score}
+      scanId={scanId}
       twitterHandle={twitterHandle}
       twitterHandleSource={twitterHandleSource}
       emphasis={badged ? "primary" : "secondary"}

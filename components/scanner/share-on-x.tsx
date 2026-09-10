@@ -21,6 +21,7 @@ export function ShareOnXButton({
   address,
   grade,
   score,
+  scanId = null,
   twitterHandle = null,
   twitterHandleSource = null,
   emphasis = "secondary",
@@ -30,6 +31,8 @@ export function ShareOnXButton({
   address: string;
   grade: Grade;
   score: number | null | undefined;
+  /** Pins share URL + OG card to this scan snapshot. */
+  scanId?: string | null;
   twitterHandle?: string | null;
   twitterHandleSource?: TwitterHandleSource | null;
   /** Badged reports: Share leads (primary). Qualifying buy path: Share is secondary. */
@@ -41,7 +44,9 @@ export function ShareOnXButton({
   const scanOrigin = (
     process.env.NEXT_PUBLIC_SCAN_ORIGIN || "https://scan.cyre.dev"
   ).replace(/\/$/, "");
-  const reportUrl = `${scanOrigin}/app?address=${encodeURIComponent(address)}`;
+  const reportUrl = scanId
+    ? `${scanOrigin}/app?address=${encodeURIComponent(address)}&s=${encodeURIComponent(scanId)}`
+    : `${scanOrigin}/app?address=${encodeURIComponent(address)}`;
   const shareUrl = shareVerifyUrl || reportUrl;
   const scoreText =
     typeof score === "number" && Number.isFinite(score) ? String(Math.round(score)) : "-";

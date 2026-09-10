@@ -19,6 +19,12 @@ function scanOrigin() {
   ).replace(/\/$/, "");
 }
 
+function cardOgUrl(origin: string, address: string, scanId?: string | null) {
+  const base = `${origin}/api/card/${encodeURIComponent(address)}/og.png`;
+  if (scanId) return `${base}?s=${encodeURIComponent(scanId)}`;
+  return base;
+}
+
 export async function generateMetadata({
   searchParams,
 }: {
@@ -26,6 +32,9 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const params = await searchParams;
   const address = readParam(params.address)?.trim() ?? "";
+  const scanIdParam = readParam(params.s)?.trim() || readParam(params.scanId)?.trim() || "";
+  const chain = readParam(params.chain);
+  const currency = readParam(params.currency);
   const origin = scanOrigin();
 
   if (!address) {
@@ -36,11 +45,28 @@ export async function generateMetadata({
     };
   }
 
-  const reportUrl = `${origin}/app?address=${encodeURIComponent(address)}`;
-  // Compressed OG card (~1024px, under 300KB). Full card remains at /api/card/<mint>.png
-  const ogImage = `${origin}/api/card/${encodeURIComponent(address)}/og.png`;
+  let scanId = scanIdParam;
+  let gradeLabel = "";
+  try {
+    const result = await runScan({ address, chain, currency });
+    if (result.kind === "report" && result.reports[0]) {
+      const report =
+        (chain && result.reports.find((r) => r.chain.id === chain)) || result.reports[0];
+      scanId = scanId || report.scanId || "";
+      if (report.grade && typeof report.score === "number") {
+        gradeLabel = `Grade ${report.grade} · ${Math.round(report.score)}/100. `;
+      }
+    }
+  } catch {
+    // Metadata must not fail the page — fall back to mint-only OG.
+  }
+
+  const reportUrl = scanId
+    ? `${origin}/app?address=${encodeURIComponent(address)}&s=${encodeURIComponent(scanId)}`
+    : `${origin}/app?address=${encodeURIComponent(address)}`;
+  const ogImage = cardOgUrl(origin, address, scanId || null);
   const title = "Guardian scan report";
-  const description = "Scanned with Guardian — grades and on-chain patterns, not a verdict.";
+  const description = `${gradeLabel}Scanned with Guardian — grades and on-chain patterns, not a verdict.`;
 
   return {
     title,
@@ -78,15 +104,9 @@ export default async function AppPage({ searchParams }: PageProps<"/app">) {
   const currency = readParam(params.currency);
 
   let result: ScanResponse | null = null;
-  if (rawAddress !== undefined && address === "") {
-    result = { kind: "error", error: "Paste a contract or mint address." };
-  } else if (address) {
+  if (address) {
     result = await runScan({ address, chain, currency });
   }
 
-  return (
-    <div className="px-4 py-10 sm:py-14">
-      <ScanForm address={address} chain={chain} result={result} />
-    </div>
-  );
+  return <ScanForm address={address} chain={chain} result={result} />;
 }
