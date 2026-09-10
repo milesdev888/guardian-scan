@@ -73,10 +73,11 @@ export function ScanForm({
         {result?.kind === "report" && activeReport ? (
           <div className="space-y-4">
             <ReportActionBar
-              key={`${activeReport.token.address}:${activeReport.token.twitterHandle ?? ""}`}
+              key={`${activeReport.token.address}:${activeReport.scanId ?? ""}:${activeReport.token.twitterHandle ?? ""}`}
               mint={activeReport.token.address}
               grade={activeReport.grade}
               score={activeReport.score}
+              scanId={activeReport.scanId}
               twitterHandle={activeReport.token.twitterHandle}
               twitterHandleSource={activeReport.token.twitterHandleSource}
             />
