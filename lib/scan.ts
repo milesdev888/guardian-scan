@@ -45,12 +45,13 @@ function cached(chainId: string, address: string, currency?: string) {
 }
 
 function remember(report: GuardianReport, address: string, currency?: string) {
-  cache.set(cacheKey(report.chain.id, address, currency), {
+  // Assign scanId + index card store so Share/OG ?s= paints this snapshot
+  const stored = putStoredScan(report);
+  cache.set(cacheKey(stored.chain.id, address, currency), {
     expires: Date.now() + CACHE_MS,
-    report,
+    report: stored,
   });
-  // 24h share-card store — same record the card endpoint paints from
-  putStoredScan(report);
+  return stored;
 }
 
 export async function probeEvmPresence(address: string): Promise<PresenceMatch[]> {
@@ -84,17 +85,18 @@ export async function scanOnChain(
   const adapter = adapterFor(chain.family);
   const t0 = Date.now();
   const report = await adapter.scan(addr, chain, { currency });
-  remember(report, cacheAddr, currency);
+  const stored = remember(report, cacheAddr, currency);
   console.info(
     `[scan-timing] ${JSON.stringify({
       label: `${chainId}:${cacheAddr}`,
       cache: "miss",
       totalMs: Date.now() - t0,
-      grade: report.grade,
-      score: report.score,
+      grade: stored.grade,
+      score: stored.score,
+      scanId: stored.scanId,
     })}`,
   );
-  return report;
+  return stored;
 }
 
 export async function runScan(input: {
