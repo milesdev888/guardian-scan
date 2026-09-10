@@ -165,6 +165,8 @@ export type SourceStatus = {
 
 export type GuardianReport = {
   schema: "guardian.report.v2";
+  /** Stable id for this scan snapshot — share text + card PNG key off it. */
+  scanId?: string;
   scannedAt: string;
   chain: {
     id: string;
