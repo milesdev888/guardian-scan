@@ -4,7 +4,7 @@ import { scanOnChain } from "@/lib/scan";
 import { maybeRequirePayment, withX402Headers } from "@/lib/x402/protocol";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 30;
 
 export async function GET(
   request: Request,
