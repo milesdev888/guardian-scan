@@ -15,8 +15,8 @@ jobs:
       - name: Assemble and commit solana adapter
         run: |
           set -euo pipefail
-          test -f .restore/solana.ts.b64.5
-          cat .restore/solana.ts.b64.0 .restore/solana.ts.b64.1 .restore/solana.ts.b64.2 .restore/solana.ts.b64.3 .restore/solana.ts.b64.4 .restore/solana.ts.b64.5 | base64 -d > lib/adapters/solana.ts
+          test -f .restore/solana.ts.b64.6
+          cat .restore/solana.ts.b64.0 .restore/solana.ts.b64.1 .restore/solana.ts.b64.2 .restore/solana.ts.b64.3 .restore/solana.ts.b64.4 .restore/solana.ts.b64.5 .restore/solana.ts.b64.6 | base64 -d > lib/adapters/solana.ts
           EXPECTED=76be8c8fc1afec2b39aa56df4069b644b5098439b3eafd7505418eaa42cae2ed
           ACTUAL=$(sha256sum lib/adapters/solana.ts | awk '{print $1}')
           echo "sha256=$ACTUAL"
