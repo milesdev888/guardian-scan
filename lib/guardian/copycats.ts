@@ -171,7 +171,7 @@ export async function findCopycats(options: {
     return !byMint.has(key) && !sameAddress(token.id, options.excludeAddress, options.family);
   });
   const enriched = await Promise.all(
-    needEnrich.slice(0, 24).map(async (token) => {
+    needEnrich.slice(0, 8).map(async (token) => {
       const hit = await enrichFromDex(token.id, ticker);
       return hit
         ? { ...hit, name: hit.name ?? token.name, symbol: token.symbol ?? ticker }
