@@ -194,6 +194,7 @@ function headlineFromChecks(
     if (tier === "PERMANENT" || tier === "BURNED" || lp.grade === "A") {
       bits.push("Locked liquidity");
     } else if (distributed) {
+      // Deep multi-pool books — never "Weak LP lock" / "unlocked" (those labels are for thin young unlocks).
       bits.push("Distributed liquidity");
     } else if (lp.grade === "B") {
       bits.push("Partially locked liquidity");
@@ -278,7 +279,9 @@ export type AaPoolStats = {
   noSingleMajority: boolean;
 };
 
+/** Strict flat majority bar applies below this total liquidity (USD). */
 export const MAJORITY_STRICT_USD = 1_000_000;
+/** Above this total liquidity (USD), ceiling is fully relaxed. */
 export const MAJORITY_RELAX_USD = 5_000_000;
 export const MAJORITY_SHARE_STRICT = 0.5;
 export const MAJORITY_SHARE_RELAXED = 0.8;
@@ -295,6 +298,7 @@ export function majorityShareCeiling(totalLiquidityUsd: number): number {
   return MAJORITY_SHARE_STRICT + (MAJORITY_SHARE_RELAXED - MAJORITY_SHARE_STRICT) * t;
 }
 
+/** Independent pools + liquidity concentration (AA / Distributed-Liquidity / Established). */
 export function analyzePoolsForAa(pools: LiquidityPool[] | null | undefined): AaPoolStats {
   const rows = (Array.isArray(pools) ? pools : [])
     .map((p) => ({
@@ -336,6 +340,8 @@ export function isDistributedLiquidity(
   pools: LiquidityPool[] | null | undefined,
 ): boolean {
   const stats = analyzePoolsForAa(pools);
+  // Same majority calculation as badge Established — never claim
+  // "distributed / no single-pool majority" when max share exceeds the ceiling.
   return (
     stats.poolCount >= DISTRIBUTED_LIQUIDITY_MIN_POOLS &&
     stats.totalLiquidityUsd >= DISTRIBUTED_LIQUIDITY_MIN_USD &&
@@ -373,6 +379,7 @@ function hasFraudFlags(checks: Check[], patterns: Pattern[]): boolean {
       item.id === "holder_concentration" ||
       item.id === "owner_privileges"
     ) {
+      // owner_privileges flag is also the authority gate; treat as fraud-adjacent for AA
       if (item.id === "owner_privileges") continue;
       if (item.grade === "F" || item.grade === "D" || item.status === "flag") {
         if (item.id === "honeypot_simulation") return true;
@@ -382,6 +389,7 @@ function hasFraudFlags(checks: Check[], patterns: Pattern[]): boolean {
       }
     }
   }
+  // Explicit fraud pattern ids / titles
   if (
     patterns.some((p) =>
       /fraud|honeypot|rug|scam|revoke/i.test(`${p.id} ${p.title}`),
@@ -398,6 +406,7 @@ function authoritiesRevoked(checks: Check[]): boolean {
   const owner = checks.find((c) => c.id === "owner_privileges");
   if (!owner) return false;
   if (owner.status === "flag") return false;
+  // Must be a clear pass with A (revoked). B/C/U do not qualify.
   return owner.status === "pass" && owner.grade === "A";
 }
 
